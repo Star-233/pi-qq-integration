@@ -6,7 +6,8 @@ import { createWsClient, type WsClient } from "./ws-client";
 import { createApiClient, type ApiClient } from "./api-client";
 import { createSessionManager, type SessionManager } from "./session-manager";
 import { createCommandHandler } from "./command-handler";
-import type { QBSession } from "./types";
+import type { QBSession, QqSettings } from "./types";
+import { DEFAULT_QQ_SETTINGS } from "./types";
 import { error as logError, info, debug, readRecentLines, getLogPath } from "./logger";
 
 const LOCK_PATH = "/home/nullsky/.pi/agent/qq-integration.lock";
@@ -47,6 +48,12 @@ export default function (pi: ExtensionAPI) {
   let _sm: SessionManager | null = null;
   let _cmdHandler: ReturnType<typeof createCommandHandler> | null = null;
 
+  /** 转发设置 */
+  let _settings: QqSettings = { ...DEFAULT_QQ_SETTINGS };
+
+  /** 最近一个发消息来的 QQ 会话（用于转发桌面消息和工具调用） */
+  let _lastActiveQqSession: QBSession | null = null;
+
   /** 消息队列：按序保留待回复的会话，避免快速连续发消息时丢失 */
   let _pendingReplies: QBSession[] = [];
 
@@ -75,6 +82,11 @@ export default function (pi: ExtensionAPI) {
         switchSession: () => {},
         newSession: () => {},
         clearSession: () => {},
+        getSettings: () => _settings,
+        updateSettings: (update: Partial<QqSettings>) => {
+          _settings = { ..._settings, ...update };
+          info(`设置已更新: ${JSON.stringify(update)}`);
+        },
       });
 
       _ws = createWsClient(_auth);
@@ -82,6 +94,7 @@ export default function (pi: ExtensionAPI) {
       _ws.onMessage((qqMsg) => {
         // 新消息开始新回合，之前的队列作废
         _pendingReplies = [qqMsg.session];
+        _lastActiveQqSession = qqMsg.session;
         debug(`收到 QQ 消息: [${qqMsg.session.type}] ${qqMsg.content.slice(0, 100)}`);
 
         _cmdHandler?.tryHandle(qqMsg.content, qqMsg.session).then((isCmd) => {
@@ -234,6 +247,31 @@ export default function (pi: ExtensionAPI) {
     // 不再自动连接，提示用户
   });
 
+  // 转发桌面端用户消息到 QQ
+  pi.on("message_end", async (event) => {
+    if (event.message.role !== "user") return;
+    if (!_settings.forwardDesktopMessages) return;
+    if (!_lastActiveQqSession || !_api) return;
+
+    const content =
+      typeof event.message.content === "string"
+        ? event.message.content
+        : "";
+
+    // 跳过来自 QQ 的消息本身（[QQ] 和 [QQ群] 开头）
+    if (content.startsWith("[QQ")) return;
+    if (!content.trim()) return;
+
+    debug(`桌面端消息: ${content.slice(0, 100)}`);
+    try {
+      await _api.sendMarkdown(_lastActiveQqSession, `**🖥 桌面端:** ${content}`);
+      info(`桌面消息已转发到 QQ: ${content.slice(0, 100)}`);
+    } catch (err) {
+      logError(`桌面消息转发失败: ${err}`);
+    }
+  });
+
+  // 转发 pi 回复到 QQ
   pi.on("message_end", async (event) => {
     if (_pendingReplies.length === 0) return;
     if (event.message.role !== "assistant") return;
@@ -258,6 +296,28 @@ export default function (pi: ExtensionAPI) {
       info(`已发回 QQ [${target.type}]: ${content.slice(0, 100)}`);
     } catch (err) {
       logError(`回复发送失败: ${err}`);
+    }
+  });
+
+  // 转发工具调用到 QQ
+  pi.on("tool_call", async (event) => {
+    if (!_settings.forwardToolCalls) return;
+    if (!_lastActiveQqSession || !_api) return;
+
+    const toolName = event.toolName || "unknown";
+    const input =
+      typeof event.input === "string"
+        ? event.input
+        : JSON.stringify(event.input ?? {});
+
+    try {
+      await _api.sendMarkdown(
+        _lastActiveQqSession,
+        `**🛠 ${toolName}** \`${input.slice(0, 200)}\``
+      );
+      debug(`工具调用已转发到 QQ: ${toolName}`);
+    } catch (err) {
+      logError(`工具调用转发失败: ${err}`);
     }
   });
 

@@ -1,11 +1,11 @@
 import type { ApiClient } from "./api-client";
 import type { SessionManager } from "./session-manager";
-import type { QBSession } from "./types";
+import type { QBSession, QqSettings } from "./types";
 import { debug, info } from "./logger";
 
 /**
  * QQ 消息中的命令处理器。
- * 解析 /cmd args 格式的命令并执行。
+ * 解析 #cmd args 格式的命令并执行。
  */
 export function createCommandHandler(
   api: ApiClient,
@@ -15,6 +15,8 @@ export function createCommandHandler(
     switchSession: (name: string) => void;
     newSession: () => void;
     clearSession: () => void;
+    getSettings: () => QqSettings;
+    updateSettings: (update: Partial<QqSettings>) => void;
   }
 ) {
   /**
@@ -58,6 +60,10 @@ export function createCommandHandler(
         await cmdHistory(from, args);
         return true;
 
+      case "settings":
+        await cmdSettings(from, args);
+        return true;
+
       default:
         // 未知命令，不作为 prompt 处理
         await api.sendMarkdown(
@@ -84,7 +90,8 @@ export function createCommandHandler(
         "| `#resume <序号/名称>` | 切换到指定 session（支持序号或名称匹配）|",
         "| `#new` | 创建新 session |",
         "| `#clear` | 清空当前 session |",
-        "| `#history [N]` | 查看最近 N 条消息 (默认 10) |",
+        "| `#history [N]` | 查看最近 N 条消息 (默认 5) |",
+        "| `#settings` | 查看/修改转发设置 |",
       ].join("\n")
     );
   }
@@ -176,6 +183,67 @@ export function createCommandHandler(
         "",
         preview,
       ].join("\n")
+    );
+  }
+
+  async function cmdSettings(session: QBSession, args: string): Promise<void> {
+    const settings = callbacks.getSettings();
+
+    if (!args) {
+      // 显示当前设置
+      const on_ = "✅ 开";
+      const off_ = "❌ 关";
+      await api.sendMarkdown(session, [
+        "## ⚙️ QQ Bot 设置",
+        "",
+        `| 选项 | 状态 | 说明 |`,
+        `|------|------|------|`,
+        `| forwardMessages | ${settings.forwardDesktopMessages ? on_ : off_} | 桌面端消息转发到 QQ |`,
+        `| forwardTools | ${settings.forwardToolCalls ? on_ : off_} | 工具调用转发到 QQ |`,
+        "",
+        "**用法：**",
+        "- `#settings forwardMessages on` — 开启消息转发",
+        "- `#settings forwardMessages off` — 关闭消息转发",
+        "- `#settings forwardTools on` — 开启工具转发",
+        "- `#settings forwardTools off` — 关闭工具转发",
+      ].join("\n"));
+      return;
+    }
+
+    // 解析参数: #settings <key> <on|off>
+    const argParts = args.trim().split(/\s+/);
+    const key = argParts[0]?.toLowerCase();
+    const value = argParts[1]?.toLowerCase();
+
+    if (key === "forwardmessages") {
+      if (value === "on") {
+        callbacks.updateSettings({ forwardDesktopMessages: true });
+        await api.sendMarkdown(session, "✅ **桌面消息转发** 已开启，桌面端输入的内容也会推送到 QQ。");
+      } else if (value === "off") {
+        callbacks.updateSettings({ forwardDesktopMessages: false });
+        await api.sendMarkdown(session, "❌ **桌面消息转发** 已关闭。");
+      } else {
+        await api.sendText(session, "用法: `#settings forwardMessages on|off`");
+      }
+      return;
+    }
+
+    if (key === "forwardtools") {
+      if (value === "on") {
+        callbacks.updateSettings({ forwardToolCalls: true });
+        await api.sendMarkdown(session, "✅ **工具调用转发** 已开启，pi 执行工具时会显示到 QQ。");
+      } else if (value === "off") {
+        callbacks.updateSettings({ forwardToolCalls: false });
+        await api.sendMarkdown(session, "❌ **工具调用转发** 已关闭。");
+      } else {
+        await api.sendText(session, "用法: `#settings forwardTools on|off`");
+      }
+      return;
+    }
+
+    await api.sendMarkdown(
+      session,
+      `未知设置项 \`${key}\`。使用 \`#settings\` 查看可用设置。`
     );
   }
 
