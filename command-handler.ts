@@ -25,7 +25,7 @@ export function createCommandHandler(
     text: string,
     from: QBSession
   ): Promise<boolean> {
-    if (!text.startsWith("/")) return false;
+    if (!text.startsWith("#")) return false;
 
     const parts = text.slice(1).trim().split(/\s+/);
     const cmd = parts[0]?.toLowerCase();
@@ -62,7 +62,7 @@ export function createCommandHandler(
         // 未知命令，不作为 prompt 处理
         await api.sendMarkdown(
           from,
-          `未知命令 \`${cmd}\`。发送 \`/help\` 查看可用命令。`
+          `未知命令 \`${cmd}\`。发送 \`#help\` 查看可用命令。`
         );
         return true;
     }
@@ -79,38 +79,38 @@ export function createCommandHandler(
         "**管理命令：**",
         "| 命令 | 说明 |",
         "|------|------|",
-        "| `/help` | 显示此帮助 |",
-        "| `/sessions` | 列出所有 pi session |",
-        "| `/resume <序号/名称>` | 切换到指定 session（支持序号或名称匹配）|",
-        "| `/new` | 创建新 session |",
-        "| `/clear` | 清空当前 session |",
-        "| `/history [N]` | 查看最近 N 条消息 (默认 10) |",
+        "| `#help` | 显示此帮助 |",
+        "| `#sessions` | 列出所有 pi session |",
+        "| `#resume <序号/名称>` | 切换到指定 session（支持序号或名称匹配）|",
+        "| `#new` | 创建新 session |",
+        "| `#clear` | 清空当前 session |",
+        "| `#history [N]` | 查看最近 N 条消息 (默认 10) |",
       ].join("\n")
     );
   }
 
   async function cmdSessions(session: QBSession): Promise<void> {
     const list = sessionManager.formatSessionList();
-    debug(`/sessions: 返回 ${list.split("\n").length} 条`);
+    debug(`#sessions: 返回 ${list.split("\n").length} 条`);
     await api.sendMarkdown(session, [
       "## 📋 Pi Sessions",
       "",
       list,
       "",
-      "用 `/resume <序号>` 或 `/resume <名称>` 切换 session",
+      "用 `#resume <序号>` 或 `#resume <名称>` 切换 session",
     ].join("\n"));
   }
 
   async function cmdResume(session: QBSession, arg: string): Promise<void> {
     if (!arg) {
-      await api.sendText(session, "用法: `/resume <序号|名称>`");
+      await api.sendText(session, "用法: `#resume <序号|名称>`");
       return;
     }
 
     const sessions = sessionManager.listSessions();
     let match: (typeof sessions)[0] | undefined;
 
-    // 支持按序号匹配: /resume 1
+    // 支持按序号匹配: #resume 1
     const idx = parseInt(arg, 10);
     if (idx > 0 && idx <= sessions.length) {
       match = sessions[idx - 1];
@@ -127,7 +127,7 @@ export function createCommandHandler(
     if (!match) {
       await api.sendMarkdown(
         session,
-        `Session \`${arg}\` 不存在。用 \`/sessions\` 查看所有可用 session。`
+        `Session \`${arg}\` 不存在。用 \`#sessions\` 查看所有可用 session。`
       );
       return;
     }
@@ -165,9 +165,9 @@ export function createCommandHandler(
 
     // 当前活跃的一般是最近修改的 session
     const current = sessions[0];
-    debug(`/history: session=${current.name}, count=${n}`);
+    debug(`#history: session=${current.name}, count=${n}`);
     const preview = sessionManager.getSessionPreview(current.name, n);
-    info(`/history 返回 ${preview.length} 字符, ${(preview.match(/\n/g) ?? []).length + 1} 行`);
+    info(`#history 返回 ${preview.length} 字符, ${(preview.match(/\n/g) ?? []).length + 1} 行`);
 
     await api.sendMarkdown(
       session,

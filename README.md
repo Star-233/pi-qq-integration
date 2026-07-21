@@ -117,23 +117,23 @@ QQ 用户
 
 | 命令 | 说明 |
 |------|------|
-| `/help` | 显示帮助 |
-| `/sessions` | 列出所有 pi session |
-| `/resume <序号/名称>` | 切换到指定 session（在终端中操作） |
-| `/new` | 创建新 session（在终端中操作） |
-| `/history [N]` | 查看当前 session 最近 N 条消息（默认 10） |
-| `/clear` | 清空当前 session（在终端中操作） |
+| `#help` | 显示帮助 |
+| `#sessions` | 列出所有 pi session |
+| `#resume <序号/名称>` | 切换到指定 session（在终端中操作） |
+| `#new` | 创建新 session（在终端中操作） |
+| `#history [N]` | 查看当前 session 最近 N 条消息（默认 5） |
+| `#clear` | 清空当前 session（在终端中操作） |
 
 ### 示例
 
 ```
-你: /sessions
+你: #sessions
 Bot: 📋 Pi Sessions
      1. **extensions 07:03** — 2小时前
      2. **learn 05:29** — 2小时前
      ...
 
-你: /history 5
+你: #history 5
 Bot: 📝 最近消息 (extensions 07:03)
      👤 今天天气怎么样？
      🤖 今天天气晴朗...
