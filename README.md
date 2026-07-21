@@ -20,18 +20,15 @@
 }
 ```
 
-### 3. 启动 pi
+### 3. 启动 pi，手动连接
 
 ```bash
 pi
+# 扩展加载后，输入:
+/qq-connect
 ```
 
-扩展会自动加载，你会在 pi 中看到通知：
-
-```
-QQ Bot: 正在连接...
-QQ Bot: 已连接 ✅
-```
+扩展不会自动连接 Bot，你需要手动输入 `/qq-connect`。断开用 `/qq-disconnect`。
 
 现在在 QQ 中给机器人发消息，就能和 pi 对话了。
 
@@ -75,6 +72,8 @@ QQ 用户
 
 | 命令 | 说明 |
 |------|------|
+| `/qq-connect` | 手动连接 QQ Bot |
+| `/qq-disconnect` | 断开 QQ Bot 连接 |
 | `/qq-status` | 查看连接状态概览（锁、WebSocket、Token） |
 | `/qq-diagnose` | 查看详细诊断信息（session_id、心跳、重连次数等） |
 
