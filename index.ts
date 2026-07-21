@@ -322,6 +322,30 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
+  // 转发工具执行结果到 QQ
+  pi.on("tool_result", async (event) => {
+    if (!_settings.forwardToolCalls) return;
+    if (!_lastActiveQqSession || !_api) return;
+    if (!event.output) return;
+
+    const output =
+      typeof event.output === "string"
+        ? event.output
+        : JSON.stringify(event.output);
+
+    if (!output.trim()) return;
+
+    try {
+      await _api.sendMarkdown(
+        _lastActiveQqSession,
+        `**📤 结果** \`\`\`\n${output.slice(0, 1500)}\n\`\`\``
+      );
+      debug(`工具结果已转发到 QQ`);
+    } catch (err) {
+      logError(`工具结果转发失败: ${err}`);
+    }
+  });
+
   pi.on("session_shutdown", async () => {
     if (_ws) { _ws.disconnect(); _ws = null; }
     _auth?.stopRefresh();
