@@ -1,10 +1,30 @@
 {
   "name": "qq-integration",
-  "private": true,
+  "version": "0.1.0",
+  "description": "QQ Bot Bridge — pi extension for chatting via QQ",
+  "private": false,
+  "type": "module",
+  "main": "index.ts",
+  "keywords": ["pi", "extension", "qq", "bot", "chat"],
+  "author": "nu11dev",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Star-233/qq-integration.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Star-233/qq-integration/issues"
+  },
+  "homepage": "https://github.com/Star-233/qq-integration#readme",
   "dependencies": {
     "ws": "^8.18.0"
   },
   "pi": {
     "extensions": ["./index.ts"]
-  }
+  },
+  "files": [
+    "*.ts",
+    "!node_modules",
+    "!plan.md"
+  ]
 }
