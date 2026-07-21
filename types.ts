@@ -118,7 +118,18 @@ export interface QQMessage {
   timestamp: string;
 }
 
-// ── Pi Session ──
+// ── QQ Bot 转发设置 ──
+
+export interface QqSettings {
+  forwardDesktopMessages: boolean;
+  forwardToolCalls: boolean;
+}
+
+export const DEFAULT_QQ_SETTINGS: QqSettings = {
+  forwardDesktopMessages: false,
+  forwardToolCalls: false,
+};
+
 
 export interface PiSessionInfo {
   name: string;
