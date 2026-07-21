@@ -1,4 +1,5 @@
 import type { AccessTokenResult, AuthManager, AuthDiagnostics } from "./types";
+import { error as logError } from "./logger";
 
 const TOKEN_API = "https://bots.qq.com/app/getAppAccessToken";
 const REFRESH_MARGIN_MS = 60_000; // 提前 60 秒刷新
@@ -51,7 +52,7 @@ export function createAuthManager(
       try {
         await fetchToken();
       } catch (err) {
-        console.error("[QQ Bot] Token 刷新失败:", err);
+        logError(`Token 刷新失败: ${err}`);
       }
       scheduleRefresh();
     }, timeUntilRefresh);

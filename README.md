@@ -76,6 +76,8 @@ QQ 用户
 | `/qq-disconnect` | 断开 QQ Bot 连接 |
 | `/qq-status` | 查看连接状态概览（锁、WebSocket、Token） |
 | `/qq-diagnose` | 查看详细诊断信息（session_id、心跳、重连次数等） |
+| `/qq-logs` | 查看最近 30 条日志 |
+| `/qq-logs-path` | 查看日志文件路径 |
 
 ### `/qq-status` 示例
 
@@ -174,6 +176,17 @@ qq-integration/
 - 持有锁的实例崩溃后，锁文件中的 PID 失效，后续实例自动接管
 
 ---
+
+## 日志
+
+所有调试日志写入文件：
+
+```
+/home/nullsky/.pi/agent/qq-integration.log
+```
+
+在 pi 中可用 `/qq-logs` 查看最近 30 条，用 `/qq-logs-path` 查看文件路径。
+日志文件达到 5MB 会自动截断。
 
 ## 注意事项
 

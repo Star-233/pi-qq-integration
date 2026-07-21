@@ -12,6 +12,7 @@ import {
   type QBSession,
   type QBSessionType,
 } from "./types";
+import { debug, error as logError } from "./logger";
 
 const GATEWAY_API = "https://api.sgroup.qq.com/gateway";
 // C2C_MESSAGE_CREATE + GROUP_AT_MESSAGE_CREATE + FRIEND_ADD + GROUP_ADD_ROBOT
@@ -94,8 +95,6 @@ export function createWsClient(auth: AuthManager): WsClient {
     };
   }
 
-  const debug: typeof console.log = () => {}; // 静默调试日志
-
   async function getGatewayUrl(): Promise<string> {
     const token = await auth.getToken();
     const resp = await fetch(GATEWAY_API, {
@@ -147,7 +146,7 @@ export function createWsClient(auth: AuthManager): WsClient {
         const hello = payload.d as HelloData;
         _heartbeatInterval = hello.heartbeat_interval;
         startHeartbeat();
-        onHello().catch((err) => console.error("[QQ Bot WS] 鉴权失败:", err));
+        onHello().catch((err) => logError(`鉴权失败: ${err}`));
         break;
       }
 
@@ -239,7 +238,7 @@ export function createWsClient(auth: AuthManager): WsClient {
     if (_reconnectTimer) clearTimeout(_reconnectTimer);
     _reconnectTimer = setTimeout(() => {
       connect().catch((err) => {
-        console.error("[QQ Bot WS] 重连失败，5 秒后重试:", err);
+        logError(`重连失败，5 秒后重试: ${err}`);
         scheduleReconnect(5000);
       });
     }, delayMs);
@@ -273,7 +272,7 @@ export function createWsClient(auth: AuthManager): WsClient {
             }
             handlePayload(payload);
           } catch (err) {
-            console.error("[QQ Bot WS] 消息解析失败:", err);
+            logError(`消息解析失败: ${err}`);
           }
         });
 
@@ -291,7 +290,7 @@ export function createWsClient(auth: AuthManager): WsClient {
         });
 
         _ws.on("error", (err: Error) => {
-          console.error("[QQ Bot WS] 连接错误:", err.message);
+          logError(`连接错误: ${err.message}`);
         });
       } catch (err) {
         reject(err);
