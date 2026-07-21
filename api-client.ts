@@ -1,6 +1,8 @@
 import type { AuthManager, SendMessageRequest, SendMessageResponse, QBSession, QBSessionType } from "./types";
+import { warn } from "./logger";
 
 const API_BASE = "https://api.sgroup.qq.com";
+const MAX_CONTENT_LENGTH = 1800;
 
 /**
  * QQ Bot REST API 客户端。
@@ -53,7 +55,10 @@ export function createApiClient(auth: AuthManager) {
    * @param text 原始文本（可能包含 Markdown 标记）
    */
   function buildMarkdownContent(text: string): { content: string } {
-    return { content: text };
+    if (text.length > MAX_CONTENT_LENGTH) {
+      warn(`Markdown 内容过长 (${text.length} > ${MAX_CONTENT_LENGTH})，已截断`);
+    }
+    return { content: text.slice(0, MAX_CONTENT_LENGTH) };
   }
 
   /**
@@ -69,7 +74,7 @@ export function createApiClient(auth: AuthManager) {
     }
   ): Promise<SendMessageResponse> {
     const body: SendMessageRequest = {
-      content: text,
+      content: text.slice(0, MAX_CONTENT_LENGTH),
       msg_type: options?.msgType ?? 0, // 0=文本, 2=Markdown
     };
 
