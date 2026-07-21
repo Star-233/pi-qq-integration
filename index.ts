@@ -80,7 +80,8 @@ export default function (pi: ExtensionAPI) {
       _ws = createWsClient(_auth);
 
       _ws.onMessage((qqMsg) => {
-        _pendingReplies.push(qqMsg.session);
+        // 新消息开始新回合，之前的队列作废
+        _pendingReplies = [qqMsg.session];
         debug(`收到 QQ 消息: [${qqMsg.session.type}] ${qqMsg.content.slice(0, 100)}`);
 
         _cmdHandler?.tryHandle(qqMsg.content, qqMsg.session).then((isCmd) => {
@@ -89,7 +90,6 @@ export default function (pi: ExtensionAPI) {
             pi.sendUserMessage(`[${fromTag}] ${qqMsg.content}`);
             info(`转发到 pi: [${fromTag}] ${qqMsg.content.slice(0, 100)}`);
           } else {
-            _pendingReplies.shift();
             debug(`QQ 命令已处理: ${qqMsg.content}`);
           }
         });
@@ -253,7 +253,7 @@ export default function (pi: ExtensionAPI) {
     debug(`pi 回复: ${content.slice(0, 100)}`);
 
     try {
-      const target = _pendingReplies.shift()!;
+      const target = _pendingReplies[0];
       await _api?.sendMarkdown(target, content);
       info(`已发回 QQ [${target.type}]: ${content.slice(0, 100)}`);
     } catch (err) {
