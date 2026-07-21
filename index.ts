@@ -7,7 +7,7 @@ import { createApiClient, type ApiClient } from "./api-client";
 import { createSessionManager, type SessionManager } from "./session-manager";
 import { createCommandHandler } from "./command-handler";
 import type { QBSession } from "./types";
-import { error as logError, info, readRecentLines, getLogPath } from "./logger";
+import { error as logError, info, debug, readRecentLines, getLogPath } from "./logger";
 
 const LOCK_PATH = "/home/nullsky/.pi/agent/qq-integration.lock";
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -82,13 +82,16 @@ export default function (pi: ExtensionAPI) {
 
       _ws.onMessage((qqMsg) => {
         _pendingReply = qqMsg.session;
+        debug(`收到 QQ 消息: [${qqMsg.session.type}] ${qqMsg.content.slice(0, 100)}`);
 
         _cmdHandler?.tryHandle(qqMsg.content, qqMsg.session).then((isCmd) => {
           if (!isCmd) {
             const fromTag = qqMsg.session.type === "c2c" ? "QQ" : "QQ群";
             pi.sendUserMessage(`[${fromTag}] ${qqMsg.content}`);
+            info(`转发到 pi: [${fromTag}] ${qqMsg.content.slice(0, 100)}`);
           } else {
             _pendingReply = null;
+            debug(`QQ 命令已处理: ${qqMsg.content}`);
           }
         });
       });
@@ -281,8 +284,11 @@ export default function (pi: ExtensionAPI) {
 
     if (!content.trim()) return;
 
+    debug(`pi 回复: ${content.slice(0, 100)}`);
+
     try {
       await _api?.sendMarkdown(_pendingReply, content);
+      info(`已发回 QQ [${_pendingReply.type}]: ${content.slice(0, 100)}`);
     } catch (err) {
       logError(`回复发送失败: ${err}`);
     } finally {
