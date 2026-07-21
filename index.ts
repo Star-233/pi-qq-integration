@@ -7,6 +7,7 @@ import { createApiClient, type ApiClient } from "./api-client";
 import { createSessionManager, type SessionManager } from "./session-manager";
 import { createCommandHandler } from "./command-handler";
 import type { QBSession } from "./types";
+import { error as logError, info, readRecentLines, getLogPath } from "./logger";
 
 const LOCK_PATH = "/home/nullsky/.pi/agent/qq-integration.lock";
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -36,7 +37,7 @@ export default function (pi: ExtensionAPI) {
   try {
     config = loadConfig();
   } catch (err) {
-    console.error("[QQ Bot]", (err as Error).message);
+    logError(`配置加载失败: ${(err as Error).message}`);
     return;
   }
 
@@ -93,13 +94,13 @@ export default function (pi: ExtensionAPI) {
       });
 
       _ws.onEvent((event) => {
-        console.log(`[QQ Bot] 事件: ${event}`);
+      logError(`事件: ${event}`);
       });
 
       await _ws.connect();
       ctx.ui.notify("QQ Bot: 已连接 ✅", "info");
     } catch (err) {
-      console.error("[QQ Bot] 初始化失败:", err);
+      logError(`初始化失败: ${err}`);
       ctx.ui.notify(`QQ Bot: 连接失败 ❌ — ${(err as Error).message}`, "error");
     }
   }
@@ -230,6 +231,30 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("qq-logs", {
+    description: "查看最近日志（最近 30 条）",
+    handler: async (_args, ctx) => {
+      const lines = readRecentLines(30);
+      if (lines.length === 0) {
+        ctx.ui.notify("(无日志)", "info");
+        return;
+      }
+      const text = lines.join("\n");
+      // 日志可能很长，用 editor 展示
+      if (text.length > 500) {
+        ctx.ui.notify(`日志文件: ${getLogPath()}\n最近 30 条日志共 ${text.length} 字符`, "info");
+      }
+      ctx.ui.notify(text, "info");
+    },
+  });
+
+  pi.registerCommand("qq-logs-path", {
+    description: "查看日志文件路径",
+    handler: async (_args, ctx) => {
+      ctx.ui.notify(`日志文件: ${getLogPath()}`, "info");
+    },
+  });
+
   // ================================================================
   // 事件
   // ================================================================
@@ -259,7 +284,7 @@ export default function (pi: ExtensionAPI) {
     try {
       await _api?.sendMarkdown(_pendingReply, content);
     } catch (err) {
-      console.error("[QQ Bot] 回复发送失败:", err);
+      logError(`回复发送失败: ${err}`);
     } finally {
       _pendingReply = null;
     }

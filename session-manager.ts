@@ -2,6 +2,7 @@ import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type { PiSessionInfo } from "./types";
+import { error as logError } from "./logger";
 
 const SESSIONS_DIR = join(homedir(), ".pi", "agent", "sessions");
 
@@ -101,7 +102,7 @@ export function createSessionManager() {
       sessions.sort((a, b) => b.modifiedAt.getTime() - a.modifiedAt.getTime());
       return sessions;
     } catch (err) {
-      console.error("[QQ Bot] 读取 sessions 失败:", err);
+      logError(`读取 sessions 失败: ${err}`);
       return [];
     }
   }
