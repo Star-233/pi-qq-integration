@@ -167,6 +167,7 @@ export function createCommandHandler(
     const current = sessions[0];
     debug(`/history: session=${current.name}, count=${n}`);
     const preview = sessionManager.getSessionPreview(current.name, n);
+    info(`/history 返回 ${preview.length} 字符, ${(preview.match(/\n/g) ?? []).length + 1} 行`);
 
     await api.sendMarkdown(
       session,
