@@ -154,7 +154,7 @@ export function createCommandHandler(
 
   async function cmdHistory(session: QBSession, arg: string): Promise<void> {
     // 从当前 session 名读取
-    const n = parseInt(arg, 10) || 10;
+    const n = parseInt(arg, 10) || 5;
 
     // 获取当前 session 的信息 - 通过扫描找到最新的 session
     const sessions = sessionManager.listSessions();
