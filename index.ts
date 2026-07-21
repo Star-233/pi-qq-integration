@@ -32,7 +32,6 @@ function formatDuration(ms: number): string {
 }
 
 export default function (pi: ExtensionAPI) {
-  // ── 加载配置 ──
   let config: ReturnType<typeof loadConfig>;
   try {
     config = loadConfig();
@@ -41,7 +40,6 @@ export default function (pi: ExtensionAPI) {
     return;
   }
 
-  // ── 模块级状态 ──
   const lock = createLockManager(LOCK_PATH);
   let _ws: WsClient | null = null;
   let _auth: AuthManager | null = null;
@@ -49,9 +47,10 @@ export default function (pi: ExtensionAPI) {
   let _sm: SessionManager | null = null;
   let _cmdHandler: ReturnType<typeof createCommandHandler> | null = null;
 
-  let _pendingReply: QBSession | null = null;
+  /** 消息队列：按序保留待回复的会话，避免快速连续发消息时丢失 */
+  let _pendingReplies: QBSession[] = [];
 
-  // ── 连接/断开逻辑 ──
+  // ── 连接/断开 ──
 
   async function connect(ctx: any): Promise<void> {
     const isOwner = await lock.acquire();
@@ -81,7 +80,7 @@ export default function (pi: ExtensionAPI) {
       _ws = createWsClient(_auth);
 
       _ws.onMessage((qqMsg) => {
-        _pendingReply = qqMsg.session;
+        _pendingReplies.push(qqMsg.session);
         debug(`收到 QQ 消息: [${qqMsg.session.type}] ${qqMsg.content.slice(0, 100)}`);
 
         _cmdHandler?.tryHandle(qqMsg.content, qqMsg.session).then((isCmd) => {
@@ -90,14 +89,14 @@ export default function (pi: ExtensionAPI) {
             pi.sendUserMessage(`[${fromTag}] ${qqMsg.content}`);
             info(`转发到 pi: [${fromTag}] ${qqMsg.content.slice(0, 100)}`);
           } else {
-            _pendingReply = null;
+            _pendingReplies.shift();
             debug(`QQ 命令已处理: ${qqMsg.content}`);
           }
         });
       });
 
       _ws.onEvent((event) => {
-      logError(`事件: ${event}`);
+        debug(`QQ 事件: ${event}`);
       });
 
       await _ws.connect();
@@ -109,28 +108,19 @@ export default function (pi: ExtensionAPI) {
   }
 
   async function disconnect(ctx: any): Promise<void> {
-    if (_ws) {
-      _ws.disconnect();
-      _ws = null;
-    }
+    if (_ws) { _ws.disconnect(); _ws = null; }
     _auth?.stopRefresh();
-    _auth = null;
-    _api = null;
-    _sm = null;
-    _cmdHandler = null;
-    _pendingReply = null;
-
+    _auth = null; _api = null; _sm = null; _cmdHandler = null;
+    _pendingReplies = [];
     lock.stopHeartbeat();
     await lock.release();
     ctx.ui.notify("QQ Bot: 已断开 🔌", "info");
   }
 
-  // ================================================================
-  // slash 命令
-  // ================================================================
+  // ── Slash 命令 ──
 
   pi.registerCommand("qq-connect", {
-    description: "连接 QQ Bot（手动连接，不会自动连接）",
+    description: "连接 QQ Bot",
     handler: async (_args, ctx) => {
       if (_ws?.getDiagnostics().connected) {
         ctx.ui.notify("QQ Bot: 已经连接了", "info");
@@ -141,41 +131,33 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("qq-disconnect", {
-    description: "断开 QQ Bot 连接",
+    description: "断开 QQ Bot",
     handler: async (_args, ctx) => {
-      if (!_ws) {
-        ctx.ui.notify("QQ Bot: 未连接", "info");
-        return;
-      }
+      if (!_ws) { ctx.ui.notify("QQ Bot: 未连接", "info"); return; }
       await disconnect(ctx);
     },
   });
 
   pi.registerCommand("qq-status", {
-    description: "查看 QQ Bot 扩展连接状态概览",
+    description: "查看连接状态概览",
     handler: async (_args, ctx) => {
       const lockDiag = lock.getDiagnostics();
       const wsDiag = _ws?.getDiagnostics();
       const authDiag = _auth?.getDiagnostics();
-
       const lines: string[] = [];
 
-      const lockIcon = lockDiag.isOwner ? "🔒" : "🔓";
-      lines.push(`${lockIcon} **锁**: ${lockDiag.isOwner ? "持有中" : "未持有"}`);
+      lines.push(`${lockDiag.isOwner ? "🔒" : "🔓"} **锁**: ${lockDiag.isOwner ? "持有中" : "未持有"}`);
 
       if (wsDiag) {
-        const wsIcon = wsDiag.connected ? "🟢" : "🔴";
-        lines.push(`${wsIcon} **WebSocket**: ${stateLabel(wsDiag.state)}`);
-        if (wsDiag.uptimeMs !== null) {
-          lines.push(`⏱ **已运行**: ${formatDuration(wsDiag.uptimeMs)}`);
-        }
+        lines.push(`${wsDiag.connected ? "🟢" : "🔴"} **WebSocket**: ${stateLabel(wsDiag.state)}`);
+        if (wsDiag.uptimeMs !== null) lines.push(`⏱ **已运行**: ${formatDuration(wsDiag.uptimeMs)}`);
       } else {
         lines.push("⚪ **WebSocket**: 未连接（用 `/qq-connect` 连接）");
       }
 
       if (authDiag) {
-        const tokenOk = authDiag.hasToken && (authDiag.expiresInMs ?? 0) > 0;
-        lines.push(`${tokenOk ? "✅" : "❌"} **Token**: ${tokenOk ? "有效" : "无效"}`);
+        const ok = authDiag.hasToken && (authDiag.expiresInMs ?? 0) > 0;
+        lines.push(`${ok ? "✅" : "❌"} **Token**: ${ok ? "有效" : "无效"}`);
       } else {
         lines.push("⚪ **Token**: 未初始化");
       }
@@ -185,12 +167,11 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("qq-diagnose", {
-    description: "查看 QQ Bot 扩展详细诊断信息",
+    description: "查看详细诊断信息",
     handler: async (_args, ctx) => {
       const lockDiag = lock.getDiagnostics();
       const wsDiag = _ws?.getDiagnostics();
       const authDiag = _auth?.getDiagnostics();
-
       const lines: string[] = [];
 
       lines.push("**🔒 锁状态**");
@@ -200,7 +181,6 @@ export default function (pi: ExtensionAPI) {
       lines.push(`- 本进程 PID: ${process.pid}`);
       lines.push(`- 心跳活跃: ${lockDiag.heartbeatActive ? "✅" : "❌"}`);
       lines.push("");
-
       lines.push("**🌐 WebSocket 连接**");
       if (wsDiag) {
         lines.push(`- 状态: ${stateLabel(wsDiag.state)}`);
@@ -214,7 +194,6 @@ export default function (pi: ExtensionAPI) {
         lines.push("- 未连接（用 `/qq-connect` 连接）");
       }
       lines.push("");
-
       lines.push("**🔑 Access Token**");
       if (authDiag) {
         lines.push(`- 有 Token: ${authDiag.hasToken ? "✅" : "❌"}`);
@@ -225,7 +204,6 @@ export default function (pi: ExtensionAPI) {
         lines.push("- 未初始化");
       }
       lines.push("");
-
       lines.push("**⚙️ 配置**");
       lines.push(`- AppID: \`${config?.appId ?? "(无)"}\``);
       lines.push(`- 锁路径: \`${LOCK_PATH}\``);
@@ -235,19 +213,11 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("qq-logs", {
-    description: "查看最近日志（最近 30 条）",
+    description: "查看最近日志（30 条）",
     handler: async (_args, ctx) => {
       const lines = readRecentLines(30);
-      if (lines.length === 0) {
-        ctx.ui.notify("(无日志)", "info");
-        return;
-      }
-      const text = lines.join("\n");
-      // 日志可能很长，用 editor 展示
-      if (text.length > 500) {
-        ctx.ui.notify(`日志文件: ${getLogPath()}\n最近 30 条日志共 ${text.length} 字符`, "info");
-      }
-      ctx.ui.notify(text, "info");
+      if (lines.length === 0) { ctx.ui.notify("(无日志)", "info"); return; }
+      ctx.ui.notify(`日志文件: ${getLogPath()}\n\n${lines.join("\n")}`, "info");
     },
   });
 
@@ -258,18 +228,14 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  // ================================================================
-  // 事件
-  // ================================================================
+  // ── 事件 ──
 
-  // session_start 不再自动连接，等待用户手动 /qq-connect
-  pi.on("session_start", async (_event, ctx) => {
-    ctx.ui.notify("QQ Bot: 用 `/qq-connect` 连接，`/qq-disconnect` 断开", "info");
+  pi.on("session_start", async () => {
+    // 不再自动连接，提示用户
   });
 
-  // message_end — 捕获 pi 的回复，回传 QQ
   pi.on("message_end", async (event) => {
-    if (!_pendingReply) return;
+    if (_pendingReplies.length === 0) return;
     if (event.message.role !== "assistant") return;
 
     const content =
@@ -287,28 +253,19 @@ export default function (pi: ExtensionAPI) {
     debug(`pi 回复: ${content.slice(0, 100)}`);
 
     try {
-      await _api?.sendMarkdown(_pendingReply, content);
-      info(`已发回 QQ [${_pendingReply.type}]: ${content.slice(0, 100)}`);
+      const target = _pendingReplies.shift()!;
+      await _api?.sendMarkdown(target, content);
+      info(`已发回 QQ [${target.type}]: ${content.slice(0, 100)}`);
     } catch (err) {
       logError(`回复发送失败: ${err}`);
-    } finally {
-      _pendingReply = null;
     }
   });
 
-  // session_shutdown — 清理资源
   pi.on("session_shutdown", async () => {
-    if (_ws) {
-      _ws.disconnect();
-      _ws = null;
-    }
+    if (_ws) { _ws.disconnect(); _ws = null; }
     _auth?.stopRefresh();
-    _auth = null;
-    _api = null;
-    _sm = null;
-    _cmdHandler = null;
-    _pendingReply = null;
-
+    _auth = null; _api = null; _sm = null; _cmdHandler = null;
+    _pendingReplies = [];
     lock.stopHeartbeat();
     await lock.release();
   });
