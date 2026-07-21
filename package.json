@@ -1,11 +1,17 @@
 {
   "name": "qq-integration",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "QQ Bot Bridge — pi extension for chatting via QQ",
   "private": false,
   "type": "module",
   "main": "index.ts",
-  "keywords": ["pi", "extension", "qq", "bot", "chat"],
+  "keywords": [
+    "pi",
+    "extension",
+    "qq",
+    "bot",
+    "chat"
+  ],
   "author": "nu11dev",
   "license": "MIT",
   "repository": {
@@ -20,7 +26,9 @@
     "ws": "^8.18.0"
   },
   "pi": {
-    "extensions": ["./index.ts"]
+    "extensions": [
+      "./index.ts"
+    ]
   },
   "files": [
     "*.ts",
