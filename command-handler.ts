@@ -1,6 +1,7 @@
 import type { ApiClient } from "./api-client";
 import type { SessionManager } from "./session-manager";
 import type { QBSession } from "./types";
+import { debug } from "./logger";
 
 /**
  * QQ 消息中的命令处理器。
@@ -29,6 +30,8 @@ export function createCommandHandler(
     const parts = text.slice(1).trim().split(/\s+/);
     const cmd = parts[0]?.toLowerCase();
     const args = parts.slice(1).join(" ");
+
+    debug(`QQ 命令: /${cmd} ${args}`);
 
     switch (cmd) {
       case "help":
@@ -88,6 +91,7 @@ export function createCommandHandler(
 
   async function cmdSessions(session: QBSession): Promise<void> {
     const list = sessionManager.formatSessionList();
+    debug(`/sessions: 返回 ${list.split("\n").length} 条`);
     await api.sendMarkdown(session, [
       "## 📋 Pi Sessions",
       "",
@@ -161,6 +165,7 @@ export function createCommandHandler(
 
     // 当前活跃的一般是最近修改的 session
     const current = sessions[0];
+    debug(`/history: session=${current.name}, count=${n}`);
     const preview = sessionManager.getSessionPreview(current.name, n);
 
     await api.sendMarkdown(
