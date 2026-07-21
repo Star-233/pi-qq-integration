@@ -1,7 +1,7 @@
 import type { ApiClient } from "./api-client";
 import type { SessionManager } from "./session-manager";
 import type { QBSession } from "./types";
-import { debug } from "./logger";
+import { debug, info } from "./logger";
 
 /**
  * QQ 消息中的命令处理器。
