@@ -133,6 +133,8 @@ export function createSessionManager() {
           const msg = parsed.message ?? parsed;
           const role = msg.role ?? "";
           if (role !== "user" && role !== "assistant") continue;
+          // 跳过空的 assistant 消息（tool call 占位符）
+          if (role === "assistant" && !extractText(msg).trim()) continue;
           allEntries.push({ role, text: extractText(msg) });
         } catch {
           // 跳过解析失败的行
