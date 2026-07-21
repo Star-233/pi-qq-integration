@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { loadConfig } from "./config";
+import { loadSettings, saveSettings } from "./config";
 import { createLockManager } from "./lock";
 import { createAuthManager, type AuthManager } from "./auth";
 import { createWsClient, type WsClient } from "./ws-client";
@@ -7,7 +8,6 @@ import { createApiClient, type ApiClient } from "./api-client";
 import { createSessionManager, type SessionManager } from "./session-manager";
 import { createCommandHandler } from "./command-handler";
 import type { QBSession, QqSettings } from "./types";
-import { DEFAULT_QQ_SETTINGS } from "./types";
 import { error as logError, info, debug, readRecentLines, getLogPath } from "./logger";
 
 const LOCK_PATH = "/home/nullsky/.pi/agent/qq-integration.lock";
@@ -49,7 +49,7 @@ export default function (pi: ExtensionAPI) {
   let _cmdHandler: ReturnType<typeof createCommandHandler> | null = null;
 
   /** 转发设置 */
-  let _settings: QqSettings = { ...DEFAULT_QQ_SETTINGS };
+  let _settings: QqSettings = loadSettings();
 
   /** 最近一个发消息来的 QQ 会话（用于转发桌面消息和工具调用） */
   let _lastActiveQqSession: QBSession | null = null;
@@ -85,6 +85,7 @@ export default function (pi: ExtensionAPI) {
         getSettings: () => _settings,
         updateSettings: (update: Partial<QqSettings>) => {
           _settings = { ..._settings, ...update };
+          saveSettings(_settings);
           info(`设置已更新: ${JSON.stringify(update)}`);
         },
       });
