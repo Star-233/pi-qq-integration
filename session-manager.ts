@@ -47,6 +47,19 @@ function shortTime(ts: string): string {
   return match ? match[1] + ":" + match[2] : ts.slice(0, 16);
 }
 
+/** 从 pi message 对象中提取文本内容 */
+function extractText(msg: Record<string, unknown>): string {
+  const c = msg.content;
+  if (typeof c === "string") return c;
+  if (Array.isArray(c)) {
+    return c
+      .filter((p: unknown) => typeof p === "object" && p !== null)
+      .map((p: Record<string, unknown>) => String(p.text ?? p.content ?? ""))
+      .join("\n");
+  }
+  return String(msg.text ?? "");
+}
+
 export function createSessionManager() {
   /**
    * 列出所有 pi session。
@@ -96,7 +109,7 @@ export function createSessionManager() {
   /**
    * 获取 session 前 N 条消息（用于 /history）
    */
-  function getSessionPreview(sessionName: string, maxLines: number = 10): string {
+  function getSessionPreview(sessionName: string, maxMessages: number = 10): string {
     try {
       const allSessions = listSessions();
       const match = allSessions.find(
@@ -108,19 +121,34 @@ export function createSessionManager() {
       if (!match) return "Session 不存在";
 
       const { readFileSync } = require("node:fs") as typeof import("node:fs");
-      const content = readFileSync(match.path, "utf-8");
-      const lines = content.trim().split("\n").slice(-maxLines);
+      const raw = readFileSync(match.path, "utf-8");
+      const allEntries: { role: string; text: string }[] = [];
 
-      return lines
-        .map((line) => {
-          try {
-            const parsed = JSON.parse(line);
-            return `[${parsed.role ?? "?"}] ${(parsed.content ?? parsed.text ?? "").slice(0, 200)}`;
-          } catch {
-            return line.slice(0, 200);
-          }
+      for (const line of raw.trim().split("\n")) {
+        try {
+          const parsed = JSON.parse(line);
+          // 只处理 message 类型，跳过 custom 等
+          if (parsed.type !== "message") continue;
+          const msg = parsed.message ?? parsed;
+          const role = msg.role ?? "";
+          if (role !== "user" && role !== "assistant") continue;
+          allEntries.push({ role, text: extractText(msg) });
+        } catch {
+          // 跳过解析失败的行
+        }
+      }
+
+      // 取最后 N 条 user/assistant 对话
+      const recent = allEntries.slice(-maxMessages);
+      if (recent.length === 0) return "(无可显示的消息)";
+
+      return recent
+        .map((e) => {
+          const label = e.role === "user" ? "👤" : "🤖";
+          const text = e.text.slice(0, 300);
+          return `${label} ${text}`;
         })
-        .join("\n");
+        .join("\n\n");
     } catch {
       return "(无法读取)";
     }
