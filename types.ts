@@ -2,6 +2,7 @@
 export interface QQBotConfig {
   appId: string;
   appSecret: string;
+  settings?: QqSettings;
 }
 
 /** 锁文件内容 */

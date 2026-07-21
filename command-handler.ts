@@ -61,6 +61,7 @@ export function createCommandHandler(
         return true;
 
       case "settings":
+      case "setting":
         await cmdSettings(from, args);
         return true;
 
