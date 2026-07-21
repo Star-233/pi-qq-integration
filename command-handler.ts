@@ -168,9 +168,7 @@ export function createCommandHandler(
       [
         `## 📝 最近消息 (${current.name})`,
         "",
-        "```",
         preview,
-        "```",
       ].join("\n")
     );
   }
