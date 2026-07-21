@@ -326,19 +326,27 @@ export default function (pi: ExtensionAPI) {
   pi.on("tool_result", async (event) => {
     if (!_settings.forwardToolCalls) return;
     if (!_lastActiveQqSession || !_api) return;
-    if (!event.output) return;
 
-    const output =
-      typeof event.output === "string"
-        ? event.output
-        : JSON.stringify(event.output);
+    // content 可能是 string 或 {text}[] 数组
+    const content = event.content;
+    if (!content) return;
 
-    if (!output.trim()) return;
+    const text =
+      typeof content === "string"
+        ? content
+        : Array.isArray(content)
+          ? content
+              .filter((p: { type?: string }) => p.type === "text")
+              .map((p: { text?: string }) => p.text)
+              .join("\n")
+          : "";
+
+    if (!text.trim()) return;
 
     try {
       await _api.sendMarkdown(
         _lastActiveQqSession,
-        `**📤 结果** \`\`\`\n${output.slice(0, 1500)}\n\`\`\``
+        `**📤 结果** \`\`\`\n${text.slice(0, 1500)}\n\`\`\``
       );
       debug(`工具结果已转发到 QQ`);
     } catch (err) {
