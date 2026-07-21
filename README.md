@@ -139,6 +139,24 @@ Bot: 📝 最近消息 (extensions 07:03)
      🤖 今天天气晴朗...
 ```
 
+### `#settings`
+
+转发设置在 `/reload` 后永久保存：
+
+```
+你: #settings
+Bot: ⚙️ QQ Bot 设置
+     | 选项 | 状态 | 说明 |
+     | forwardMessages | ❌ 关 | 桌面端消息转发到 QQ |
+     | forwardTools | ✅ 开 | 工具调用转发到 QQ |
+
+你: #settings forwardTools on
+Bot: ✅ 工具调用转发已开启
+
+你: #settings forwardMessages off
+Bot: ❌ 桌面消息转发已关闭
+```
+
 ---
 
 ## 文件结构
@@ -193,6 +211,7 @@ qq-integration/
 1. **Token 安全** — `access_token` 有效期 2 小时，扩展会自动提前刷新
 2. **消息频率** — QQ Bot 主动消息每月每用户/群限 4 条，被动回复较宽松
 3. **Session 管理** — session 切换（`/new`、`/resume`）需在 pi 终端中操作
+4. **`#settings` 持久化** — 设置保存在 `qq-integration-config.json` 中，`/reload` 不丢失
 4. **群聊消息** — 仅接收 @机器人的群消息（`GROUP_AT_MESSAGE_CREATE`）
 5. **配置文件** — 含 AppSecret，注意不要提交到 git
 
