@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.11
+
+- 更新 `description` 为 "QQ integration for pi — control pi from QQ"，使描述与包名更契合。
+
 ## 0.2.10
 
 - 增加扩展加载时的版本日志，便于排查运行版本。

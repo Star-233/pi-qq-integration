@@ -1,7 +1,7 @@
 {
   "name": "qq-integration",
-  "version": "0.2.10",
-  "description": "QQ Bot Bridge — pi extension for chatting via QQ",
+  "version": "0.2.11",
+  "description": "QQ integration for pi — control pi from QQ",
   "private": false,
   "type": "module",
   "main": "dist/index.js",
