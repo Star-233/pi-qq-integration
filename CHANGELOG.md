@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1
+
+- 修复桌面端消息转发 Bug：首次 QQ 消息到达前，桌面端消息没有目标会话而被丢弃。
+- 新增 `QqSettings.defaultSession`，在收到 QQ 消息时自动记忆会话目标并持久化。
+- 桌面端消息转发优先使用 `_lastActiveQqSession`，不存在时回退到 `_settings.defaultSession`。
+
 ## 0.2.0
 
 - 重构为符合 pi 官方 package 规范的发布结构。
