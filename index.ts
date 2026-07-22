@@ -195,14 +195,29 @@ export default function (pi: ExtensionAPI) {
 				_pendingReplies = [qqMsg.session];
 				_lastActiveQqSession = qqMsg.session;
 				// 记忆默认会话，桌面端消息在 QQ 未发消息时也能转发
-				if (
+				const sessionChanged =
 					!_settings.defaultSession ||
 					_settings.defaultSession.type !== qqMsg.session.type ||
-					_settings.defaultSession.id !== qqMsg.session.id
-				) {
+					_settings.defaultSession.id !== qqMsg.session.id;
+				if (sessionChanged) {
 					_settings = { ..._settings, defaultSession: qqMsg.session };
 					saveSettings(_settings);
 					info(`默认会话已更新: ${qqMsg.session.type}/${qqMsg.session.id}`);
+				} else if (_settings.defaultSession) {
+					// 同一会话：更新最新 msgId / eventId
+					const existing = _settings.defaultSession;
+					_settings = {
+						..._settings,
+						defaultSession: {
+							type: existing.type,
+							id: existing.id,
+							name: existing.name,
+							userId: existing.userId,
+							msgId: qqMsg.session.msgId,
+							eventId: qqMsg.eventId,
+						},
+					};
+					saveSettings(_settings);
 				}
 				debug(
 					`收到 QQ 消息: [${qqMsg.session.type}] ${qqMsg.content.slice(0, 100)}`,
@@ -468,9 +483,12 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 
-		info(`桌面端消息准备转发: target=${target.type}/${target.id}, content=${content.slice(0, 100)}`);
+		const replyTo = target.msgId || target.eventId
+			? { msgId: target.msgId, eventId: target.eventId }
+			: undefined;
+		info(`桌面端消息准备转发: target=${target.type}/${target.id}, replyTo=${JSON.stringify(replyTo)}, content=${content.slice(0, 100)}`);
 		try {
-			await _api.sendMarkdown(target, `**🖥 桌面端:** ${content}`);
+			await _api.sendMarkdown(target, `**🖥 桌面端:** ${content}`, replyTo);
 			info(`桌面消息已转发到 QQ: ${content.slice(0, 100)}`);
 		} catch (err) {
 			logError(`桌面消息转发失败: ${err}`);

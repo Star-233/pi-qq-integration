@@ -209,12 +209,14 @@ export function createWsClient(auth: AuthManager): WsClient {
           : raw.group_openid ?? "",
       name: raw.author.username ?? (type === "c2c" ? "好友" : "群聊"),
       userId: raw.author.user_openid ?? raw.author.member_openid,
+      msgId: raw.id,
     };
     return {
       id: raw.id,
       content: raw.content,
       session,
       timestamp: raw.timestamp,
+      eventId: raw.id,
     };
   }
 
