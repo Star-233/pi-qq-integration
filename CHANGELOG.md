@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.2
+
+- 从 `package.json` 动态读取版本号，避免版本号与发布版本不一致。
+
 ## 0.3.1
 
 - 修正 `EXTENSION_VERSION` 常量与 `package.json` 版本不一致的问题。

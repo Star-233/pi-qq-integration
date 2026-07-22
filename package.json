@@ -1,6 +1,6 @@
 {
   "name": "pi-qq-integration",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "QQ integration for pi — control pi from QQ",
   "private": false,
   "type": "module",
