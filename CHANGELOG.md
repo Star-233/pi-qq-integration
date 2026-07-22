@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.8
+
+- 修复 assistant 回复、工具调用、工具结果转发到 QQ 时未使用 `msg_id` 的问题。
+- 移除 `_pendingReplies` 队列，统一使用 `_lastActiveQqSession ?? _settings.defaultSession` 作为转发目标。
+- 桌面消息、assistant 回复、工具调用/结果共享同一目标及其 `msg_id`，确保 QQ 能正确送达。
+
 ## 0.2.7
 
 - 增加 QQ API 响应体日志，便于诊断消息发送成功但未送达的问题。

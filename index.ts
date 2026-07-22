@@ -153,9 +153,6 @@ export default function (pi: ExtensionAPI) {
 	/** 最近一个发消息来的 QQ 会话（用于转发桌面消息和工具调用） */
 	let _lastActiveQqSession: QBSession | null = null;
 
-	/** 消息队列：按序保留待回复的会话，避免快速连续发消息时丢失 */
-	let _pendingReplies: QBSession[] = [];
-
 	// ── 连接/断开 ──
 
 	async function connect(ctx: ExtensionCommandContext): Promise<void> {
@@ -192,8 +189,6 @@ export default function (pi: ExtensionAPI) {
 			_ws = createWsClient(_auth);
 
 			_ws.onMessage((qqMsg) => {
-				// 新消息开始新回合，之前的队列作废
-				_pendingReplies = [qqMsg.session];
 				_lastActiveQqSession = qqMsg.session;
 				// 记忆默认会话，桌面端消息在 QQ 未发消息时也能转发
 				const sessionChanged =
@@ -257,7 +252,6 @@ export default function (pi: ExtensionAPI) {
 		_api = null;
 		_sm = null;
 		_cmdHandler = null;
-		_pendingReplies = [];
 		lock.stopHeartbeat();
 		await lock.release();
 		ctx.ui.notify("QQ Bot: 已断开 🔌", "info");
@@ -501,18 +495,24 @@ export default function (pi: ExtensionAPI) {
 
 	// 转发 pi 回复到 QQ
 	pi.on("message_end", async (event: MessageEndEvent) => {
-		if (_pendingReplies.length === 0) return;
 		if (event.message.role !== "assistant") return;
 
-		const content = extractTextFromContent(event.message.content);
+		const target = _lastActiveQqSession ?? _settings.defaultSession;
+		if (!target || !_api) {
+			debug(`pi 回复跳过: 没有可用目标或 API`);
+			return;
+		}
 
+		const content = extractTextFromContent(event.message.content);
 		if (!content.trim()) return;
 
 		debug(`pi 回复: ${content.slice(0, 100)}`);
 
+		const replyTo = target.msgId || target.eventId
+			? { msgId: target.msgId, eventId: target.eventId }
+			: undefined;
 		try {
-			const target = _pendingReplies[0];
-			await _api?.sendMarkdown(target, content);
+			await _api.sendMarkdown(target, content, replyTo);
 			info(`已发回 QQ [${target.type}]: ${content.slice(0, 100)}`);
 		} catch (err) {
 			logError(`回复发送失败: ${err}`);
@@ -522,16 +522,22 @@ export default function (pi: ExtensionAPI) {
 	// 转发工具调用到 QQ
 	pi.on("tool_call", async (event: ToolCallEvent) => {
 		if (!_settings.forwardToolCalls) return;
-		if (!_lastActiveQqSession || !_api) return;
+
+		const target = _lastActiveQqSession ?? _settings.defaultSession;
+		if (!target || !_api) return;
 
 		const toolName = event.toolName || "unknown";
 		const input = event.input ?? {};
 		const inputLines = formatToolInput(input);
 
+		const replyTo = target.msgId || target.eventId
+			? { msgId: target.msgId, eventId: target.eventId }
+			: undefined;
 		try {
 			await _api.sendMarkdown(
-				_lastActiveQqSession,
+				target,
 				`**🛠 ${toolName}**\n${inputLines}`,
+				replyTo,
 			);
 			debug(`工具调用已转发到 QQ: ${toolName}`);
 		} catch (err) {
@@ -542,16 +548,21 @@ export default function (pi: ExtensionAPI) {
 	// 转发工具执行结果到 QQ
 	pi.on("tool_result", async (event: ToolResultEvent) => {
 		if (!_settings.forwardToolCalls) return;
-		if (!_lastActiveQqSession || !_api) return;
+
+		const target = _lastActiveQqSession ?? _settings.defaultSession;
+		if (!target || !_api) return;
 
 		const text = extractTextFromContent(event.content);
-
 		if (!text.trim()) return;
 
+		const replyTo = target.msgId || target.eventId
+			? { msgId: target.msgId, eventId: target.eventId }
+			: undefined;
 		try {
 			await _api.sendMarkdown(
-				_lastActiveQqSession,
+				target,
 				`**📤 结果** \n\`\`\`\n${text}\n\`\`\``,
+				replyTo,
 			);
 			debug(`工具结果已转发到 QQ`);
 		} catch (err) {
@@ -569,7 +580,6 @@ export default function (pi: ExtensionAPI) {
 		_api = null;
 		_sm = null;
 		_cmdHandler = null;
-		_pendingReplies = [];
 		lock.stopHeartbeat();
 		await lock.release();
 	});
