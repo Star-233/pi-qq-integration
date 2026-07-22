@@ -110,13 +110,16 @@ export interface QBSession {
   id: string;          // openid / group_openid / channel_id
   name: string;        // display name
   userId?: string;     // for groups: the sender's member_openid (for reply context)
+  msgId?: string;      // 最近一条 QQ 消息的 msg_id，用于桌面端消息以 reply 形式发送
+  eventId?: string;    // 最近一条 QQ 机器人事件的 event_id
 }
 
 export interface QQMessage {
-  id: string;
+  id: string;          // 消息 ID
   content: string;
   session: QBSession;
   timestamp: string;
+  eventId?: string;    // 事件 ID（用于被动消息回复）
 }
 
 // ── QQ Bot 转发设置 ──
