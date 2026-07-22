@@ -456,8 +456,7 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 
-		const content =
-			typeof event.message.content === "string" ? event.message.content : "";
+		const content = extractTextFromContent(event.message.content);
 
 		// 跳过来自 QQ 的消息本身（[QQ] 和 [QQ群] 开头）
 		if (content.startsWith("[QQ")) {
@@ -465,7 +464,7 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 		if (!content.trim()) {
-			debug(`桌面转发跳过: 内容为空`);
+			debug(`桌面转发跳过: 内容为空 (raw=${JSON.stringify(event.message.content).slice(0, 200)})`);
 			return;
 		}
 
