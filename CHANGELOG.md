@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.12
+
+- 修复 `package.json` 中 `pi.image` 的分支路径（`main` → `master`）。
+
 ## 0.2.11
 
 - 更新 `description` 为 "QQ integration for pi — control pi from QQ"，使描述与包名更契合。
