@@ -194,6 +194,15 @@ export default function (pi: ExtensionAPI) {
 				// 新消息开始新回合，之前的队列作废
 				_pendingReplies = [qqMsg.session];
 				_lastActiveQqSession = qqMsg.session;
+				// 记忆默认会话，桌面端消息在 QQ 未发消息时也能转发
+				if (
+					!_settings.defaultSession ||
+					_settings.defaultSession.type !== qqMsg.session.type ||
+					_settings.defaultSession.id !== qqMsg.session.id
+				) {
+					_settings = { ..._settings, defaultSession: qqMsg.session };
+					saveSettings(_settings);
+				}
 				debug(
 					`收到 QQ 消息: [${qqMsg.session.type}] ${qqMsg.content.slice(0, 100)}`,
 				);
@@ -379,7 +388,10 @@ export default function (pi: ExtensionAPI) {
 	pi.on("message_end", async (event: MessageEndEvent) => {
 		if (event.message.role !== "user") return;
 		if (!_settings.forwardDesktopMessages) return;
-		if (!_lastActiveQqSession || !_api) return;
+		if (!_api) return;
+
+		const target = _lastActiveQqSession ?? _settings.defaultSession;
+		if (!target) return;
 
 		const content =
 			typeof event.message.content === "string" ? event.message.content : "";
@@ -390,7 +402,7 @@ export default function (pi: ExtensionAPI) {
 
 		debug(`桌面端消息: ${content.slice(0, 100)}`);
 		try {
-			await _api.sendMarkdown(_lastActiveQqSession, `**🖥 桌面端:** ${content}`);
+			await _api.sendMarkdown(target, `**🖥 桌面端:** ${content}`);
 			info(`桌面消息已转发到 QQ: ${content.slice(0, 100)}`);
 		} catch (err) {
 			logError(`桌面消息转发失败: ${err}`);
