@@ -32,10 +32,12 @@
   "pi": {
     "extensions": [
       "./index.ts"
-    ]
+    ],
+    "image": "https://raw.githubusercontent.com/Star-233/qq-integration/main/screenshot.png"
   },
   "files": [
     "*.ts",
+    "*.png",
     "!node_modules",
     "!plan.md"
   ],
