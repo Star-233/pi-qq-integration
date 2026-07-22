@@ -202,6 +202,7 @@ export default function (pi: ExtensionAPI) {
 				) {
 					_settings = { ..._settings, defaultSession: qqMsg.session };
 					saveSettings(_settings);
+					info(`默认会话已更新: ${qqMsg.session.type}/${qqMsg.session.id}`);
 				}
 				debug(
 					`收到 QQ 消息: [${qqMsg.session.type}] ${qqMsg.content.slice(0, 100)}`,
@@ -436,21 +437,39 @@ export default function (pi: ExtensionAPI) {
 
 	// 转发桌面端用户消息到 QQ
 	pi.on("message_end", async (event: MessageEndEvent) => {
-		if (event.message.role !== "user") return;
-		if (!_settings.forwardDesktopMessages) return;
-		if (!_api) return;
+		if (event.message.role !== "user") {
+			debug(`桌面转发跳过: role=${event.message.role}`);
+			return;
+		}
+		if (!_settings.forwardDesktopMessages) {
+			debug(`桌面转发跳过: forwardDesktopMessages=false`);
+			return;
+		}
+		if (!_api) {
+			debug(`桌面转发跳过: _api=null`);
+			return;
+		}
 
 		const target = _lastActiveQqSession ?? _settings.defaultSession;
-		if (!target) return;
+		if (!target) {
+			debug(`桌面转发跳过: 没有可用目标 (lastActive=${!!_lastActiveQqSession}, default=${!!_settings.defaultSession})`);
+			return;
+		}
 
 		const content =
 			typeof event.message.content === "string" ? event.message.content : "";
 
 		// 跳过来自 QQ 的消息本身（[QQ] 和 [QQ群] 开头）
-		if (content.startsWith("[QQ")) return;
-		if (!content.trim()) return;
+		if (content.startsWith("[QQ")) {
+			debug(`桌面转发跳过: 内容来自 QQ 前缀`);
+			return;
+		}
+		if (!content.trim()) {
+			debug(`桌面转发跳过: 内容为空`);
+			return;
+		}
 
-		debug(`桌面端消息: ${content.slice(0, 100)}`);
+		info(`桌面端消息准备转发: target=${target.type}/${target.id}, content=${content.slice(0, 100)}`);
 		try {
 			await _api.sendMarkdown(target, `**🖥 桌面端:** ${content}`);
 			info(`桌面消息已转发到 QQ: ${content.slice(0, 100)}`);
