@@ -84,6 +84,7 @@ QQ 用户
 | `/qq-diagnose` | 查看详细诊断信息（session_id、心跳、重连次数等） |
 | `/qq-logs` | 查看最近 30 条日志 |
 | `/qq-logs-path` | 查看日志文件路径 |
+| `/qq-target` | 设置/查看默认 QQ 转发目标 |
 
 ### `/qq-status` 示例
 
@@ -129,6 +130,7 @@ QQ 用户
 | `#new` | 创建新 session（在终端中操作） |
 | `#history [N]` | 查看当前 session 最近 N 条消息（默认 5） |
 | `#clear` | 清空当前 session（在终端中操作） |
+| `#target` | 将当前 QQ 会话设为默认转发目标 |
 
 ### 示例
 
@@ -144,6 +146,31 @@ Bot: 📝 最近消息 (extensions 07:03)
      👤 今天天气怎么样？
      🤖 今天天气晴朗...
 ```
+
+### 桌面端消息转发
+
+开启桌面端转发（`#settings forwardMessages on`）后，桌面端输入的消息会同步转发到 QQ。扩展需要知道“发到哪个 QQ 会话”，目标按以下优先级选择：
+
+1. 最近一条 QQ 消息来源的会话
+2. 手动设置的默认目标（`/qq-target` 或 QQ 里的 `#target`）
+
+因此，如果你**先**在桌面端发消息、**后**才收到 QQ 消息，需要预先指定默认目标：
+
+```bash
+# 在 pi 终端设置默认目标（以私聊为例）
+/qq-target c2c <用户openid>
+
+# 或设置群聊
+/qq-target group <群openid>
+
+# 查看当前默认目标
+/qq-target
+
+# 清除
+/qq-target clear
+```
+
+也可以在 QQ 里发送 `#target`，把当前会话设为默认目标。
 
 ### `#settings`
 

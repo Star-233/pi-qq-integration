@@ -65,6 +65,10 @@ export function createCommandHandler(
         await cmdSettings(from, args);
         return true;
 
+      case "target":
+        await cmdTarget(from);
+        return true;
+
       default:
         // 未知命令，不作为 prompt 处理
         await api.sendMarkdown(
@@ -93,6 +97,7 @@ export function createCommandHandler(
         "| `#clear` | 清空当前 session |",
         "| `#history [N]` | 查看最近 N 条消息 (默认 5) |",
         "| `#settings` | 查看/修改转发设置 |",
+        "| `#target` | 将当前 QQ 会话设为默认转发目标 |",
       ].join("\n")
     );
   }
@@ -245,6 +250,14 @@ export function createCommandHandler(
     await api.sendMarkdown(
       session,
       `未知设置项 \`${key}\`。使用 \`#settings\` 查看可用设置。`
+    );
+  }
+
+  async function cmdTarget(session: QBSession): Promise<void> {
+    callbacks.updateSettings({ defaultSession: session });
+    await api.sendMarkdown(
+      session,
+      `✅ 已将当前会话设为默认转发目标：\`${session.type}\` \`${session.id}\``
     );
   }
 
