@@ -112,6 +112,7 @@ export interface QBSession {
   userId?: string;     // for groups: the sender's member_openid (for reply context)
   msgId?: string;      // 最近一条 QQ 消息的 msg_id，用于桌面端消息以 reply 形式发送
   eventId?: string;    // 最近一条 QQ 机器人事件的 event_id
+  lastMsgSeq?: number; // 该 msg_id 最后使用的 msg_seq，避免重连后去重失败
 }
 
 export interface QQMessage {

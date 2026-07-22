@@ -3,17 +3,23 @@ import { debug } from "./logger.js";
 
 const API_BASE = "https://api.sgroup.qq.com";
 
+export interface CreateApiClientOptions {
+  initialMsgSeqMap?: Map<string, number>;
+  onSeqUpdate?: (msgId: string, seq: number) => void;
+}
+
 /**
  * QQ Bot REST API 客户端。
  * 负责发送消息到 QQ。
  */
-export function createApiClient(auth: AuthManager) {
+export function createApiClient(auth: AuthManager, options?: CreateApiClientOptions) {
   // 每个 msg_id 的回复序号，避免相同 msg_id + msg_seq 被去重
-  const _msgSeqMap = new Map<string, number>();
+  const _msgSeqMap = new Map<string, number>(options?.initialMsgSeqMap ?? []);
 
   function nextMsgSeq(msgId: string): number {
     const next = (_msgSeqMap.get(msgId) ?? 0) + 1;
     _msgSeqMap.set(msgId, next);
+    options?.onSeqUpdate?.(msgId, next);
     return next;
   }
 
