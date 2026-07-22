@@ -1,4 +1,5 @@
 import type { AuthManager, SendMessageRequest, SendMessageResponse, QBSession, QBSessionType } from "./types.js";
+import { debug } from "./logger.js";
 
 const API_BASE = "https://api.sgroup.qq.com";
 
@@ -54,7 +55,9 @@ export function createApiClient(auth: AuthManager) {
       throw new Error(`API 请求失败 (${resp.status}): ${text}`);
     }
 
-    return (await resp.json().catch(() => ({}))) as SendMessageResponse;
+    const json = (await resp.json().catch(() => ({}))) as SendMessageResponse;
+    debug(`[QQ API] ${method} ${path} -> ${resp.status} ${JSON.stringify(json)}`);
+    return json;
   }
 
   /**
