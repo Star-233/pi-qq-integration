@@ -17,6 +17,7 @@ import type { QBSession, QBSessionType, QqSettings } from "./types.js";
 import {
 	error as logError,
 	info,
+	warn,
 	debug,
 	readRecentLines,
 	getLogPath,
@@ -487,6 +488,9 @@ export default function (pi: ExtensionAPI) {
 			? { msgId: target.msgId, eventId: target.eventId }
 			: undefined;
 		info(`桌面端消息准备转发: target=${target.type}/${target.id}, replyTo=${JSON.stringify(replyTo)}, content=${content.slice(0, 100)}`);
+		if (!replyTo) {
+			warn(`桌面消息将以主动消息发送；若未收到，请检查 Bot 主动消息权限，或在 QQ 里发送 #target 刷新被动回复凭据`);
+		}
 		try {
 			await _api.sendMarkdown(target, `**🖥 桌面端:** ${content}`, replyTo);
 			info(`桌面消息已转发到 QQ: ${content.slice(0, 100)}`);
