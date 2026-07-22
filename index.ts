@@ -25,6 +25,7 @@ import {
 
 const LOCK_PATH = "/home/nullsky/.pi/agent/qq-integration.lock";
 const HEARTBEAT_INTERVAL_MS = 30_000;
+const EXTENSION_VERSION = "0.2.9";
 
 function stateLabel(state: string): string {
 	switch (state) {
@@ -150,6 +151,8 @@ export default function (pi: ExtensionAPI) {
 		logError(`配置加载失败: ${(err as Error).message}`);
 		return;
 	}
+
+	info(`qq-integration 扩展加载: v${EXTENSION_VERSION}`);
 
 	const lock = createLockManager(LOCK_PATH);
 	let _ws: WsClient | null = null;
