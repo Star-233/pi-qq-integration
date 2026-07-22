@@ -131,6 +131,17 @@ function extractTextFromContent(content: unknown): string {
 	return "";
 }
 
+function buildMsgSeqMap(settings: QqSettings, activeSession?: QBSession | null): Map<string, number> {
+	const map = new Map<string, number>();
+	if (settings.defaultSession?.msgId && settings.defaultSession.lastMsgSeq) {
+		map.set(settings.defaultSession.msgId, settings.defaultSession.lastMsgSeq);
+	}
+	if (activeSession?.msgId && activeSession.lastMsgSeq) {
+		map.set(activeSession.msgId, activeSession.lastMsgSeq);
+	}
+	return map;
+}
+
 export default function (pi: ExtensionAPI) {
 	let config: ReturnType<typeof loadConfig>;
 	try {
@@ -170,7 +181,22 @@ export default function (pi: ExtensionAPI) {
 			await _auth.getToken();
 			_auth.startRefresh();
 
-			_api = createApiClient(_auth);
+			_api = createApiClient(_auth, {
+				initialMsgSeqMap: buildMsgSeqMap(_settings, _lastActiveQqSession),
+				onSeqUpdate: (msgId, seq) => {
+					let changed = false;
+					if (_settings.defaultSession?.msgId === msgId) {
+						_settings.defaultSession.lastMsgSeq = seq;
+						changed = true;
+					}
+					if (_lastActiveQqSession?.msgId === msgId) {
+						_lastActiveQqSession.lastMsgSeq = seq;
+					}
+					if (changed) {
+						saveSettings(_settings);
+					}
+				},
+			});
 			_sm = createSessionManager();
 
 			_cmdHandler = createCommandHandler(_api, _sm, {

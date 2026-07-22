@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.9
+
+- 修复重连后同一 `msg_id` 因 `msg_seq` 计数器重置而被去重的问题。
+- 为 `QBSession` 增加 `lastMsgSeq`，并在 `ApiClient` 初始化时从设置恢复。
+- 发送消息时递增 `msg_seq` 并持久化到设置。
+
 ## 0.2.8
 
 - 修复 assistant 回复、工具调用、工具结果转发到 QQ 时未使用 `msg_id` 的问题。
