@@ -54,8 +54,8 @@ function extractText(msg: Record<string, unknown>): string {
   if (typeof c === "string") return c;
   if (Array.isArray(c)) {
     return c
-      .filter((p: unknown) => typeof p === "object" && p !== null)
-      .map((p: Record<string, unknown>) => String(p.text ?? p.content ?? ""))
+      .filter((p: unknown): p is Record<string, unknown> => typeof p === "object" && p !== null)
+      .map((p) => String(p.text ?? p.content ?? ""))
       .join("\n");
   }
   return String(msg.text ?? "");
