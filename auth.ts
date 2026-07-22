@@ -1,6 +1,6 @@
-import type { AccessTokenResult, AuthManager, AuthDiagnostics } from "./types";
-export type { AuthManager } from "./types";
-import { error as logError } from "./logger";
+import type { AccessTokenResult, AuthManager, AuthDiagnostics } from "./types.js";
+export type { AuthManager } from "./types.js";
+import { error as logError } from "./logger.js";
 
 const TOKEN_API = "https://bots.qq.com/app/getAppAccessToken";
 const REFRESH_MARGIN_MS = 60_000; // 提前 60 秒刷新

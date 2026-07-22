@@ -4,23 +4,23 @@ import type {
 	MessageEndEvent,
 	ToolCallEvent,
 	ToolResultEvent,
-} from "./pi-types";
-import { loadConfig } from "./config";
-import { loadSettings, saveSettings } from "./config";
-import { createLockManager } from "./lock";
-import { createAuthManager, type AuthManager } from "./auth";
-import { createWsClient, type WsClient } from "./ws-client";
-import { createApiClient, type ApiClient } from "./api-client";
-import { createSessionManager, type SessionManager } from "./session-manager";
-import { createCommandHandler } from "./command-handler";
-import type { QBSession, QqSettings } from "./types";
+} from "@earendil-works/pi-coding-agent";
+import { loadConfig } from "./config.js";
+import { loadSettings, saveSettings } from "./config.js";
+import { createLockManager } from "./lock.js";
+import { createAuthManager, type AuthManager } from "./auth.js";
+import { createWsClient, type WsClient } from "./ws-client.js";
+import { createApiClient, type ApiClient } from "./api-client.js";
+import { createSessionManager, type SessionManager } from "./session-manager.js";
+import { createCommandHandler } from "./command-handler.js";
+import type { QBSession, QqSettings } from "./types.js";
 import {
 	error as logError,
 	info,
 	debug,
 	readRecentLines,
 	getLogPath,
-} from "./logger";
+} from "./logger.js";
 
 const LOCK_PATH = "/home/nullsky/.pi/agent/qq-integration.lock";
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -110,6 +110,26 @@ function escapeBackticks(text: string): string {
 	return text.replace(/`/g, "\\`");
 }
 
+function isTextBlock(p: unknown): p is { type: "text"; text: string } {
+	return (
+		typeof p === "object" &&
+		p !== null &&
+		(p as { type?: string }).type === "text" &&
+		typeof (p as { text?: unknown }).text === "string"
+	);
+}
+
+function extractTextFromContent(content: unknown): string {
+	if (typeof content === "string") return content;
+	if (Array.isArray(content)) {
+		return content
+			.filter(isTextBlock)
+			.map((p) => p.text)
+			.join("\n");
+	}
+	return "";
+}
+
 export default function (pi: ExtensionAPI) {
 	let config: ReturnType<typeof loadConfig>;
 	try {
@@ -137,7 +157,7 @@ export default function (pi: ExtensionAPI) {
 
 	// ── 连接/断开 ──
 
-	async function connect(ctx: any): Promise<void> {
+	async function connect(ctx: ExtensionCommandContext): Promise<void> {
 		const isOwner = await lock.acquire();
 		if (!isOwner) {
 			ctx.ui.notify("QQ Bot: 锁被其他 pi 实例持有", "warning");
@@ -201,7 +221,7 @@ export default function (pi: ExtensionAPI) {
 		}
 	}
 
-	async function disconnect(ctx: any): Promise<void> {
+	async function disconnect(ctx: ExtensionCommandContext): Promise<void> {
 		if (_ws) {
 			_ws.disconnect();
 			_ws = null;
@@ -382,15 +402,7 @@ export default function (pi: ExtensionAPI) {
 		if (_pendingReplies.length === 0) return;
 		if (event.message.role !== "assistant") return;
 
-		const content =
-			typeof event.message.content === "string"
-				? event.message.content
-				: Array.isArray(event.message.content)
-					? event.message.content
-							.filter((p: { type?: string }) => p.type === "text")
-							.map((p: { text?: string }) => p.text)
-							.join("\n")
-					: "";
+		const content = extractTextFromContent(event.message.content);
 
 		if (!content.trim()) return;
 
@@ -430,19 +442,7 @@ export default function (pi: ExtensionAPI) {
 		if (!_settings.forwardToolCalls) return;
 		if (!_lastActiveQqSession || !_api) return;
 
-		// content 可能是 string 或 {text}[] 数组
-		const content = event.content;
-		if (!content) return;
-
-		const text =
-			typeof content === "string"
-				? content
-				: Array.isArray(content)
-					? content
-							.filter((p: { type?: string }) => p.type === "text")
-							.map((p: { text?: string }) => p.text)
-							.join("\n")
-					: "";
+		const text = extractTextFromContent(event.content);
 
 		if (!text.trim()) return;
 

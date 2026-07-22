@@ -1,8 +1,8 @@
-import { readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import type { PiSessionInfo } from "./types";
-import { error as logError } from "./logger";
+import type { PiSessionInfo } from "./types.js";
+import { error as logError } from "./logger.js";
 
 const SESSIONS_DIR = join(homedir(), ".pi", "agent", "sessions");
 
@@ -121,7 +121,6 @@ export function createSessionManager() {
       );
       if (!match) return "Session 不存在";
 
-      const { readFileSync } = require("node:fs") as typeof import("node:fs");
       const raw = readFileSync(match.path, "utf-8");
       const allEntries: { role: string; text: string }[] = [];
 

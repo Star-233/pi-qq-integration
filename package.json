@@ -1,13 +1,21 @@
 {
   "name": "qq-integration",
-  "version": "0.1.14",
+  "version": "0.2.0",
   "description": "QQ Bot Bridge — pi extension for chatting via QQ",
   "private": false,
   "type": "module",
-  "main": "index.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "keywords": [
     "pi",
     "pi-package",
+    "pi-extension",
     "extension",
     "qq",
     "bot",
@@ -23,25 +31,34 @@
     "url": "https://github.com/Star-233/qq-integration/issues"
   },
   "homepage": "https://github.com/Star-233/qq-integration#readme",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "prepack": "npm run build"
+  },
   "dependencies": {
     "ws": "^8.18.0"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
   },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.81.1",
+    "@types/node": "^26.1.1",
+    "@types/ws": "^8.18.1",
+    "typescript": "^5.0.0"
+  },
   "pi": {
     "extensions": [
-      "./index.ts"
+      "./dist/index.js"
     ],
     "image": "https://raw.githubusercontent.com/Star-233/qq-integration/main/screenshot.png"
   },
   "files": [
-    "*.ts",
-    "*.png",
-    "!node_modules",
-    "!plan.md"
-  ],
-  "devDependencies": {
-    "@types/node": "^26.1.1"
-  }
+    "dist/",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "screenshot.png"
+  ]
 }

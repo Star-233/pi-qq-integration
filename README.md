@@ -2,6 +2,12 @@
 
 在 **QQ 中操控 pi**。安装此扩展后，pi 启动时自动连接 QQ Bot，你可以通过 QQ 向 pi 发消息、查看 session 列表、浏览历史对话。
 
+## 安装
+
+```bash
+pi install npm:qq-integration
+```
+
 ---
 
 ## 快速开始
