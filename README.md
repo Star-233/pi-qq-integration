@@ -1,11 +1,11 @@
-# QQ Integration — pi 扩展
+# pi-qq-integration — pi 扩展
 
 在 **QQ 中操控 pi**。安装此扩展后，pi 启动时自动连接 QQ Bot，你可以通过 QQ 向 pi 发消息、查看 session 列表、浏览历史对话。
 
 ## 安装
 
 ```bash
-pi install npm:qq-integration
+pi install npm:pi-qq-integration
 ```
 
 ---
@@ -48,7 +48,7 @@ QQ 用户
   ├─ 发消息 → QQ Bot 服务器 → WebSocket
   │                                │
   │                     ┌──────────▼──────────┐
-  │                     │  qq-integration 扩展  │
+  │                     │  pi-qq-integration 扩展  │
   │                     │                      │
   │                     │  ws-client.ts        │
   │                     │    ↕ WebSocket       │
@@ -195,7 +195,7 @@ Bot: ❌ 桌面消息转发已关闭
 ## 文件结构
 
 ```
-qq-integration/
+pi-qq-integration/
 ├── index.ts              # 入口：初始化、事件注册、slash 命令
 ├── config.ts             # 读取 qq-integration-config.json
 ├── auth.ts               # QQ Bot Access Token 获取 + 自动刷新

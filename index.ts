@@ -152,7 +152,7 @@ export default function (pi: ExtensionAPI) {
 		return;
 	}
 
-	info(`qq-integration 扩展加载: v${EXTENSION_VERSION}`);
+	info(`pi-qq-integration 扩展加载: v${EXTENSION_VERSION}`);
 
 	const lock = createLockManager(LOCK_PATH);
 	let _ws: WsClient | null = null;
