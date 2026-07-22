@@ -144,7 +144,7 @@ export interface PiSessionInfo {
 // ── Lock Manager ──
 
 export interface LockManager {
-  acquire(path: string): Promise<boolean>;
+  acquire(): Promise<boolean>;
   release(): Promise<void>;
   heartbeat(): Promise<void>;
   isOwner(): boolean;

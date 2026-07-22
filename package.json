@@ -25,6 +25,9 @@
   "dependencies": {
     "ws": "^8.18.0"
   },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
   "pi": {
     "extensions": [
       "./index.ts"
@@ -34,5 +37,8 @@
     "*.ts",
     "!node_modules",
     "!plan.md"
-  ]
+  ],
+  "devDependencies": {
+    "@types/node": "^26.1.1"
+  }
 }

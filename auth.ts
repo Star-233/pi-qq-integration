@@ -1,4 +1,5 @@
 import type { AccessTokenResult, AuthManager, AuthDiagnostics } from "./types";
+export type { AuthManager } from "./types";
 import { error as logError } from "./logger";
 
 const TOKEN_API = "https://bots.qq.com/app/getAppAccessToken";
