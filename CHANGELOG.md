@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.1
+
+- 修正 `EXTENSION_VERSION` 常量与 `package.json` 版本不一致的问题。
+
 ## 0.3.0
 
 - 重命名 npm 包为 `pi-qq-integration`，使名称更符合 pi 生态前缀约定。

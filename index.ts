@@ -25,7 +25,7 @@ import {
 
 const LOCK_PATH = "/home/nullsky/.pi/agent/qq-integration.lock";
 const HEARTBEAT_INTERVAL_MS = 30_000;
-const EXTENSION_VERSION = "0.2.9";
+const EXTENSION_VERSION = "0.3.0";
 
 function stateLabel(state: string): string {
 	switch (state) {
