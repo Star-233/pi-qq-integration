@@ -1,6 +1,6 @@
 {
   "name": "qq-integration",
-  "version": "0.2.11",
+  "version": "0.2.12",
   "description": "QQ integration for pi — control pi from QQ",
   "private": false,
   "type": "module",
@@ -52,7 +52,7 @@
     "extensions": [
       "./dist/index.js"
     ],
-    "image": "https://raw.githubusercontent.com/Star-233/qq-integration/main/screenshot.png"
+    "image": "https://raw.githubusercontent.com/Star-233/qq-integration/master/screenshot.png"
   },
   "files": [
     "dist/",
