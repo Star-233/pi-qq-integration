@@ -1,5 +1,5 @@
 import WebSocket from "ws";
-import type { AuthManager } from "./types";
+import type { AuthManager } from "./types.js";
 import {
   OpCode,
   type WSPayload,
@@ -11,8 +11,8 @@ import {
   type QQMessage,
   type QBSession,
   type QBSessionType,
-} from "./types";
-import { debug, error as logError } from "./logger";
+} from "./types.js";
+import { debug, error as logError } from "./logger.js";
 
 const GATEWAY_API = "https://api.sgroup.qq.com/gateway";
 // C2C_MESSAGE_CREATE + GROUP_AT_MESSAGE_CREATE + FRIEND_ADD + GROUP_ADD_ROBOT

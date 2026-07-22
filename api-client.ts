@@ -1,4 +1,4 @@
-import type { AuthManager, SendMessageRequest, SendMessageResponse, QBSession, QBSessionType } from "./types";
+import type { AuthManager, SendMessageRequest, SendMessageResponse, QBSession, QBSessionType } from "./types.js";
 
 const API_BASE = "https://api.sgroup.qq.com";
 
@@ -137,6 +137,8 @@ export function createApiClient(auth: AuthManager) {
       case "channel":
         path = `/channels/${session.id}/messages`;
         break;
+      default:
+        throw new Error(`不支持的会话类型: ${session.type}`);
     }
 
     return (await request("POST", path, body)) as SendMessageResponse;

@@ -1,5 +1,5 @@
 import { writeFileSync, readFileSync, unlinkSync, existsSync } from "node:fs";
-import { type LockFile, type LockManager, type LockDiagnostics } from "./types";
+import { type LockFile, type LockManager, type LockDiagnostics } from "./types.js";
 
 const DEFAULT_LOCK_PATH = "/home/nullsky/.pi/agent/qq-integration.lock";
 

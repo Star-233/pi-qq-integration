@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import type { QQBotConfig, QqSettings } from "./types";
-import { DEFAULT_QQ_SETTINGS } from "./types";
+import type { QQBotConfig, QqSettings } from "./types.js";
+import { DEFAULT_QQ_SETTINGS } from "./types.js";
 
 const DEFAULT_CONFIG_PATH = "/home/nullsky/.pi/agent/qq-integration-config.json";
 
