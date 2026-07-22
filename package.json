@@ -1,6 +1,6 @@
 {
-  "name": "qq-integration",
-  "version": "0.2.12",
+  "name": "pi-qq-integration",
+  "version": "0.3.0",
   "description": "QQ integration for pi — control pi from QQ",
   "private": false,
   "type": "module",
@@ -25,12 +25,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Star-233/qq-integration.git"
+    "url": "git+https://github.com/Star-233/pi-qq-integration.git"
   },
   "bugs": {
-    "url": "https://github.com/Star-233/qq-integration/issues"
+    "url": "https://github.com/Star-233/pi-qq-integration/issues"
   },
-  "homepage": "https://github.com/Star-233/qq-integration#readme",
+  "homepage": "https://github.com/Star-233/pi-qq-integration#readme",
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
@@ -52,7 +52,7 @@
     "extensions": [
       "./dist/index.js"
     ],
-    "image": "https://raw.githubusercontent.com/Star-233/qq-integration/master/screenshot.png"
+    "image": "https://raw.githubusercontent.com/Star-233/pi-qq-integration/master/screenshot.png"
   },
   "files": [
     "dist/",

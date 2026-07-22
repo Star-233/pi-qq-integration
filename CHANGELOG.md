@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.0
+
+- 重命名 npm 包为 `pi-qq-integration`，使名称更符合 pi 生态前缀约定。
+- 更新 GitHub 仓库地址、README 安装命令、package.json 中的 URL 和截图路径。
+
 ## 0.2.12
 
 - 修复 `package.json` 中 `pi.image` 的分支路径（`main` → `master`）。
