@@ -7,6 +7,15 @@ const API_BASE = "https://api.sgroup.qq.com";
  * 负责发送消息到 QQ。
  */
 export function createApiClient(auth: AuthManager) {
+  // 每个 msg_id 的回复序号，避免相同 msg_id + msg_seq 被去重
+  const _msgSeqMap = new Map<string, number>();
+
+  function nextMsgSeq(msgId: string): number {
+    const next = (_msgSeqMap.get(msgId) ?? 0) + 1;
+    _msgSeqMap.set(msgId, next);
+    return next;
+  }
+
   async function request(
     method: string,
     path: string,
@@ -73,7 +82,10 @@ export function createApiClient(auth: AuthManager) {
       msg_type: options?.msgType ?? 0, // 0=文本, 2=Markdown
     };
 
-    if (options?.msgId) body.msg_id = options.msgId;
+    if (options?.msgId) {
+      body.msg_id = options.msgId;
+      body.msg_seq = nextMsgSeq(options.msgId);
+    }
     if (options?.eventId) body.event_id = options.eventId;
 
     let path: string;
@@ -123,7 +135,10 @@ export function createApiClient(auth: AuthManager) {
       msg_type: 2,
       markdown: buildMarkdownContent(markdown),
     };
-    if (replyTo?.msgId) body.msg_id = replyTo.msgId;
+    if (replyTo?.msgId) {
+      body.msg_id = replyTo.msgId;
+      body.msg_seq = nextMsgSeq(replyTo.msgId);
+    }
     if (replyTo?.eventId) body.event_id = replyTo.eventId;
 
     let path: string;
