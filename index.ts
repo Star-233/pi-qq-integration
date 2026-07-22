@@ -13,7 +13,7 @@ import { createWsClient, type WsClient } from "./ws-client.js";
 import { createApiClient, type ApiClient } from "./api-client.js";
 import { createSessionManager, type SessionManager } from "./session-manager.js";
 import { createCommandHandler } from "./command-handler.js";
-import type { QBSession, QqSettings } from "./types.js";
+import type { QBSession, QBSessionType, QqSettings } from "./types.js";
 import {
 	error as logError,
 	info,
@@ -375,6 +375,56 @@ export default function (pi: ExtensionAPI) {
 		description: "查看日志文件路径",
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
 			ctx.ui.notify(`日志文件: ${getLogPath()}`, "info");
+		},
+	});
+
+	pi.registerCommand("qq-target", {
+		description: "设置/查看默认 QQ 转发目标",
+		handler: async (args: string, ctx: ExtensionCommandContext) => {
+			const parts = args.trim().split(/\s+/);
+			const sub = parts[0]?.toLowerCase();
+
+			if (!sub || sub === "show") {
+				const t = _settings.defaultSession;
+				ctx.ui.notify(
+					t
+						? `默认目标: \`${t.type}\` \`${t.id}\` (${t.name})`
+						: "未设置默认目标。发送一条 QQ 消息，或用 `/qq-target <c2c|group|channel> <id> [name]` 手动设置。",
+					"info",
+				);
+				return;
+			}
+
+			if (sub === "clear") {
+				_settings = { ..._settings, defaultSession: undefined };
+				saveSettings(_settings);
+				ctx.ui.notify("默认目标已清除", "info");
+				return;
+			}
+
+			const validTypes = ["c2c", "group", "channel"];
+			if (!validTypes.includes(sub)) {
+				ctx.ui.notify(
+					`类型必须是 c2c / group / channel / clear / show。用法: /qq-target c2c <openid> [备注]`,
+					"warning",
+				);
+				return;
+			}
+
+			const id = parts[1];
+			const name = parts.slice(2).join(" ") || id;
+			if (!id) {
+				ctx.ui.notify("缺少 ID。用法: /qq-target c2c <openid> [备注]", "warning");
+				return;
+			}
+
+			const session: QBSession = { type: sub as QBSessionType, id, name };
+			_settings = { ..._settings, defaultSession: session };
+			saveSettings(_settings);
+			ctx.ui.notify(
+				`默认目标已设为: \`${sub}\` \`${id}\` (${name})`,
+				"info",
+			);
 		},
 	});
 
