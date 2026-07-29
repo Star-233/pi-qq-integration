@@ -1,6 +1,6 @@
 # pi-qq-integration — pi 扩展
 
-在 **QQ 中操控 pi**。安装此扩展后，pi 启动时会加载扩展，但**不会自动连接** QQ Bot——你需要在 pi 中输入 `/qq-connect` 手动连接，之后即可通过 QQ 向 pi 发消息、查看 session 列表、浏览历史对话。
+在 **QQ 中操控 pi**。安装此扩展后，pi 启动时会自动加载扩展并**默认自动连接** QQ Bot（可在配置中关闭）。连接后即可通过 QQ 向 pi 发消息、查看 session 列表、浏览历史对话；也可随时用 `/qq-connect`、`/qq-disconnect` 手动控制连接。
 
 ## 安装
 
@@ -26,17 +26,66 @@ pi install npm:pi-qq-integration
 }
 ```
 
-### 3. 启动 pi，手动连接
+### 3. 启动 pi
 
 ```bash
 pi
-# 扩展加载后，输入:
-/qq-connect
 ```
 
-扩展不会自动连接 Bot，你需要手动输入 `/qq-connect`。断开用 `/qq-disconnect`。
+扩展加载后会**自动连接** QQ Bot（默认行为）。如需关闭自动连接，在配置文件加 `"autoConnect": false` 后重启 pi，再用 `/qq-connect` 手动连接；断开用 `/qq-disconnect`。
 
 现在在 QQ 中给机器人发消息，就能和 pi 对话了。
+
+---
+
+## 配置项（qq-integration-config.json）
+
+配置文件路径：`/home/nullsky/.pi/agent/qq-integration-config.json`（位于 pi 的 agent 数据目录，与扩展代码目录无关）。以下**所有**可配置项均在此文件中：
+
+### 顶层字段
+
+| 字段 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `appId` | string | ✅ | — | QQ 开放平台机器人应用的 AppID |
+| `appSecret` | string | ✅ | — | QQ 开放平台机器人应用的 AppSecret（**敏感，勿提交 git**） |
+| `instanceId` | string | ❌ | `hostname-pid` | 多实例下本实例的唯一 ID，用于注册表区分各实例 |
+| `role` | `"auto" \| "leader" \| "follower"` | ❌ | `"auto"` | 多实例角色：`auto` 由文件锁自动选举；`leader` 强制本实例持有 QQ 连接；`follower` 强制本实例经 IPC 接入其他 leader |
+| `autoConnect` | boolean | ❌ | `true` | pi 启动时是否自动连接 QQ Bot；设为 `false` 则需手动 `/qq-connect` |
+
+### `settings` 字段（转发设置）
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `forwardDesktopMessages` | boolean | `false` | 桌面端（pi 终端）输入的消息是否转发到 QQ |
+| `forwardToolCalls` | boolean | `false` | 工具调用是否转发到 QQ（与 `lastMessageOnly` 互斥，开启其一会关闭另一个） |
+| `lastMessageOnly` | boolean | `false` | 只转发整次 agent 运行的**最后一条** assistant 回复（而非每条逐步回复）；与 `forwardToolCalls` 互斥 |
+| `defaultSession` | object \| undefined | `undefined` | 默认 QQ 转发目标（QBSession），桌面端/工具转发未明确来源会话时使用；由 `/qq-target` 或 QQ 内 `#target` 写入 |
+
+> `settings` 内的字段既可在配置文件里静态写死，也可在 QQ 内用 `#settings` 命令动态调整并持久化（见下文「QQ 命令」）。注意 `#settings` 命令对前两个开关使用了简写别名：`forwardMessages` 对应配置键 `forwardDesktopMessages`，`forwardTools` 对应 `forwardToolCalls`。
+
+### 完整示例
+
+```json
+{
+  "appId": "你的 AppID",
+  "appSecret": "你的 AppSecret",
+  "autoConnect": true,
+  "role": "auto",
+  "settings": {
+    "forwardDesktopMessages": false,
+    "forwardToolCalls": false,
+    "lastMessageOnly": false
+  }
+}
+```
+
+### 多实例
+
+同时运行多个 pi 实例时，用文件锁选举唯一的 leader 持有 QQ 连接；其余实例作为 follower 经本地 Unix socket 把 QQ 收发委托给 leader。`autoConnect` 对**所有**实例生效——启动即各自参与选举，最终只有抢到锁的 leader 真正连接 QQ，其余 follower 经 IPC 接入，不会冲突。相关配置：
+
+- `role: "auto"`（默认）：谁先抢到锁谁是 leader，其余自动成为 follower。
+- `role: "leader"` / `"follower"`：强制角色（例如固定某台机器做 leader）。
+- `instanceId`：一般无需修改；仅在需要固定 ID（如日志/注册表排查）时设置。
 
 ---
 

@@ -3,6 +3,33 @@ export interface QQBotConfig {
   appId: string;
   appSecret: string;
   settings?: QqSettings;
+  /** 多实例：本实例唯一 ID（默认 hostname-pid） */
+  instanceId?: string;
+  /** 多实例：强制角色，默认 auto（由文件锁选举） */
+  role?: "auto" | "leader" | "follower";
+  /** 是否在 pi 启动时自动连接 QQ Bot，默认 true（设 false 需手动 /qq-connect） */
+  autoConnect?: boolean;
+}
+
+// ── 多实例：实例注册表 ──
+
+export type QBRole = "leader" | "follower";
+
+export interface InstanceEntry {
+  id: string;
+  pid: number;
+  role: QBRole;
+  piSession?: string;
+  sockPath?: string;
+  startedAt: number;
+  heartbeatAt: number;
+  claimedSessions: string[];
+}
+
+export interface QQRegistry {
+  leader: string | null;
+  leaderSock?: string;
+  instances: Record<string, InstanceEntry>;
 }
 
 /** 锁文件内容 */

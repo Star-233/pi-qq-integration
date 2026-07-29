@@ -17,6 +17,7 @@ export function createCommandHandler(
     clearSession: () => void;
     getSettings: () => QqSettings;
     updateSettings: (update: Partial<QqSettings>) => void;
+    claimSession?: (session: QBSession) => void;
   }
 ) {
   /**
@@ -273,6 +274,7 @@ export function createCommandHandler(
 
   async function cmdTarget(session: QBSession): Promise<void> {
     callbacks.updateSettings({ defaultSession: session });
+    callbacks.claimSession?.(session);
     await api.sendMarkdown(
       session,
       `✅ 已将当前会话设为默认转发目标：\`${session.type}\` \`${session.id}\``
