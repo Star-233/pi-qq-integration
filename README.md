@@ -131,6 +131,7 @@ QQ 用户
 | `#history [N]` | 查看当前 session 最近 N 条消息（默认 5） |
 | `#clear` | 清空当前 session（在终端中操作） |
 | `#target` | 将当前 QQ 会话设为默认转发目标 |
+| `#settings lastMessageOnly on|off` | 只转发整次回复的最后一条 assistant 回复 |
 
 ### 示例
 
@@ -182,12 +183,16 @@ Bot: ⚙️ QQ Bot 设置
      | 选项 | 状态 | 说明 |
      | forwardMessages | ❌ 关 | 桌面端消息转发到 QQ |
      | forwardTools | ✅ 开 | 工具调用转发到 QQ |
+     | lastMessageOnly | ❌ 关 | 只转发整次回复的最后一条 assistant 回复 |
 
 你: #settings forwardTools on
 Bot: ✅ 工具调用转发已开启
 
 你: #settings forwardMessages off
 Bot: ❌ 桌面消息转发已关闭
+
+你: #settings lastMessageOnly on
+Bot: ✅ 只转发最后一条回复已开启，assistant 整次运行仅发送一条最终回复；forwardTools 已自动关闭。
 ```
 
 ---

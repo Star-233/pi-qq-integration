@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.4
+
+- 修复 `lastMessageOnly` 转发重复问题：原实现监听 `turn_end` 事件，但 `turn_end` 每轮（turn）触发一次，agentic 模式下多步工具调用任务会在 QQ 中产生多条转发。
+- 改用 `agent_settled` 事件（整次 agent 运行仅触发一次），从 `sessionManager.getEntries()` 取最后一条 assistant 消息转发，确保 QQ 只收到一条最终回复。
+- 保留 `message_end`(assistant) 在 `lastMessageOnly` 开启时的跳过逻辑，避免逐条重复转发。
+- 更新 README 与 `#settings` 提示文案，将“当前 turn”更正为“整次运行”。
+
+## 0.3.3
+
+- 新增 `lastMessageOnly` 转发设置：开启后只把 assistant 当前 turn 的最终文本回复转发到 QQ。
+- `lastMessageOnly` 与 `forwardTools` 互锁：开启前者时自动关闭后者，开启后者时自动关闭前者。
+- 新增 `turn_end` 事件监听，用于捕获每轮最终 assistant 回复。
+- 更新 README 中 `#settings` 命令说明。
+
 ## 0.3.2
 
 - 从 `package.json` 动态读取版本号，避免版本号与发布版本不一致。

@@ -21,6 +21,7 @@ import {
 	debug,
 	readRecentLines,
 	getLogPath,
+	clearLog,
 } from "./logger.js";
 import { createRequire } from "node:module";
 
@@ -422,6 +423,14 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
+	pi.registerCommand("qq-logs-clear", {
+		description: "清空日志文件",
+		handler: async (_args: string, ctx: ExtensionCommandContext) => {
+			clearLog();
+			ctx.ui.notify(`日志已清空: ${getLogPath()}`, "info");
+		},
+	});
+
 	pi.registerCommand("qq-target", {
 		description: "设置/查看默认 QQ 转发目标",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
@@ -530,6 +539,12 @@ export default function (pi: ExtensionAPI) {
 	pi.on("message_end", async (event: MessageEndEvent) => {
 		if (event.message.role !== "assistant") return;
 
+		// 开启 lastMessageOnly 时统一走 agent_settled，避免逐条重复转发
+		if (_settings.lastMessageOnly) {
+			debug(`pi 回复跳过: lastMessageOnly=true，等待 agent_settled 统一转发`);
+			return;
+		}
+
 		const target = _lastActiveQqSession ?? _settings.defaultSession;
 		if (!target || !_api) {
 			debug(`pi 回复跳过: 没有可用目标或 API`);
@@ -549,6 +564,47 @@ export default function (pi: ExtensionAPI) {
 			info(`已发回 QQ [${target.type}]: ${content.slice(0, 100)}`);
 		} catch (err) {
 			logError(`回复发送失败: ${err}`);
+		}
+	});
+
+	// 当开启 lastMessageOnly 时，整次 agent 运行结束后只转发最后一条 assistant 回复（一次）
+	pi.on("agent_settled", async (_event, ctx) => {
+		if (!_settings.lastMessageOnly) return;
+
+		// agent_settled 不携带消息，需从会话条目中取最后一条 assistant
+		let lastAssistant: { content: unknown } | undefined;
+		for (const e of ctx.sessionManager.getEntries()) {
+			if (e.type === "message" && e.message.role === "assistant") {
+				lastAssistant = e.message;
+			}
+		}
+		if (!lastAssistant) {
+			debug(`agent_settled 转发跳过: 无 assistant 消息`);
+			return;
+		}
+
+		const target = _lastActiveQqSession ?? _settings.defaultSession;
+		if (!target || !_api) {
+			debug(`agent_settled 转发跳过: 没有可用目标或 API`);
+			return;
+		}
+
+		const content = extractTextFromContent(lastAssistant.content);
+		if (!content.trim()) {
+			debug(`agent_settled 转发跳过: 内容为空`);
+			return;
+		}
+
+		debug(`agent_settled 转发: ${content.slice(0, 100)}`);
+
+		const replyTo = target.msgId || target.eventId
+			? { msgId: target.msgId, eventId: target.eventId }
+			: undefined;
+		try {
+			await _api.sendMarkdown(target, content, replyTo);
+			info(`已发回 QQ (最后一条) [${target.type}]: ${content.slice(0, 100)}`);
+		} catch (err) {
+			logError(`agent_settled 转发失败: ${err}`);
 		}
 	});
 

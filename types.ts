@@ -128,12 +128,14 @@ export interface QQMessage {
 export interface QqSettings {
   forwardDesktopMessages: boolean;
   forwardToolCalls: boolean;
+  lastMessageOnly: boolean;
   defaultSession?: QBSession;
 }
 
 export const DEFAULT_QQ_SETTINGS: QqSettings = {
   forwardDesktopMessages: false,
   forwardToolCalls: false,
+  lastMessageOnly: false,
   defaultSession: undefined,
 };
 

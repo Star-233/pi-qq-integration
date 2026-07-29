@@ -206,12 +206,15 @@ export function createCommandHandler(
         `|------|------|------|`,
         `| forwardMessages | ${settings.forwardDesktopMessages ? on_ : off_} | 桌面端消息转发到 QQ |`,
         `| forwardTools | ${settings.forwardToolCalls ? on_ : off_} | 工具调用转发到 QQ |`,
+        `| lastMessageOnly | ${settings.lastMessageOnly ? on_ : off_} | 只转发整次回复的最后一条 assistant 回复 |`,
         "",
         "**用法：**",
         "- `#settings forwardMessages on` — 开启消息转发",
         "- `#settings forwardMessages off` — 关闭消息转发",
         "- `#settings forwardTools on` — 开启工具转发",
         "- `#settings forwardTools off` — 关闭工具转发",
+        "- `#settings lastMessageOnly on` — 只转发最后一条回复（会关闭工具转发）",
+        "- `#settings lastMessageOnly off` — 关闭只转发最后一条",
       ].join("\n"));
       return;
     }
@@ -236,13 +239,28 @@ export function createCommandHandler(
 
     if (key === "forwardtools") {
       if (value === "on") {
-        callbacks.updateSettings({ forwardToolCalls: true });
-        await api.sendMarkdown(session, "✅ **工具调用转发** 已开启，pi 执行工具时会显示到 QQ。");
+        // 与 lastMessageOnly 互斥：开启工具转发时自动关闭只转发最后一条
+        callbacks.updateSettings({ forwardToolCalls: true, lastMessageOnly: false });
+        await api.sendMarkdown(session, "✅ **工具调用转发** 已开启，同时 `lastMessageOnly` 已自动关闭。");
       } else if (value === "off") {
         callbacks.updateSettings({ forwardToolCalls: false });
         await api.sendMarkdown(session, "❌ **工具调用转发** 已关闭。");
       } else {
         await api.sendText(session, "用法: `#settings forwardTools on|off`");
+      }
+      return;
+    }
+
+    if (key === "lastmessageonly") {
+      if (value === "on") {
+        // 与 forwardTools 互锁：开启时强制关闭工具转发
+        callbacks.updateSettings({ lastMessageOnly: true, forwardToolCalls: false });
+        await api.sendMarkdown(session, "✅ **只转发最后一条回复** 已开启，assistant 整次运行仅发送一条最终回复；`forwardTools` 已自动关闭。");
+      } else if (value === "off") {
+        callbacks.updateSettings({ lastMessageOnly: false });
+        await api.sendMarkdown(session, "❌ **只转发最后一条回复** 已关闭。");
+      } else {
+        await api.sendText(session, "用法: `#settings lastMessageOnly on|off`");
       }
       return;
     }
