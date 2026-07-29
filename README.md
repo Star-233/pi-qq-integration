@@ -1,6 +1,6 @@
 # pi-qq-integration — pi 扩展
 
-在 **QQ 中操控 pi**。安装此扩展后，pi 启动时自动连接 QQ Bot，你可以通过 QQ 向 pi 发消息、查看 session 列表、浏览历史对话。
+在 **QQ 中操控 pi**。安装此扩展后，pi 启动时会加载扩展，但**不会自动连接** QQ Bot——你需要在 pi 中输入 `/qq-connect` 手动连接，之后即可通过 QQ 向 pi 发消息、查看 session 列表、浏览历史对话。
 
 ## 安装
 
