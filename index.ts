@@ -1,19 +1,32 @@
 import type {
 	ExtensionAPI,
 	ExtensionCommandContext,
+	ExtensionContext,
 	MessageEndEvent,
 	ToolCallEvent,
 	ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
-import { loadConfig } from "./config.js";
+import { loadConfig, loadMultiInstanceConfig } from "./config.js";
 import { loadSettings, saveSettings } from "./config.js";
 import { createLockManager } from "./lock.js";
+import { createIpcServer, createIpcClient } from "./ipc.js";
+import {
+	upsertInstance,
+	removeInstance,
+	setClaim,
+	findClaimer,
+	setLeader,
+	clearLeader,
+	getLeaderSock,
+	pruneDead,
+	touchInstance,
+} from "./registry.js";
 import { createAuthManager, type AuthManager } from "./auth.js";
 import { createWsClient, type WsClient } from "./ws-client.js";
 import { createApiClient, type ApiClient } from "./api-client.js";
 import { createSessionManager, type SessionManager } from "./session-manager.js";
 import { createCommandHandler } from "./command-handler.js";
-import type { QBSession, QBSessionType, QqSettings } from "./types.js";
+import type { InstanceEntry, QBSession, QBSessionType, QqSettings, SendMessageResponse } from "./types.js";
 import {
 	error as logError,
 	info,
@@ -172,18 +185,59 @@ export default function (pi: ExtensionAPI) {
 	/** 最近一个发消息来的 QQ 会话（用于转发桌面消息和工具调用） */
 	let _lastActiveQqSession: QBSession | null = null;
 
+	// ── 多实例状态 ──
+	const _multi = loadMultiInstanceConfig();
+	let _role: "leader" | "follower" | null = null;
+	const _instanceId = _multi.instanceId;
+	const _roleConfig = _multi.role;
+	let _ipcServer: ReturnType<typeof createIpcServer> | null = null;
+	let _ipcClient: ReturnType<typeof createIpcClient> | null = null;
+	let _registryTimer: ReturnType<typeof setInterval> | null = null;
+	let _followerStop = false;
+	let _followerRetryTimer: ReturnType<typeof setTimeout> | null = null;
+
 	// ── 连接/断开 ──
 
-	async function connect(ctx: ExtensionCommandContext): Promise<void> {
-		const isOwner = await lock.acquire();
-		if (!isOwner) {
-			ctx.ui.notify("QQ Bot: 锁被其他 pi 实例持有", "warning");
+		// ── 连接/断开（多实例：leader 持 QQ 连接，follower 经 IPC 委派）──
+
+	const LEADER_SOCK_PATH = `/home/nullsky/.pi/agent/qq-integration/instances/${process.pid}.sock`;
+
+	async function connect(ctx: ExtensionContext): Promise<void> {
+		if (_role) {
+			ctx.ui.notify("QQ Bot: 已经连接了", "info");
 			return;
 		}
+		const role = _roleConfig;
+		if (role === "follower") {
+			await becomeFollower(ctx);
+			return;
+		}
+		const isOwner = await lock.acquire();
+		if (isOwner) {
+			await becomeLeader(ctx);
+		} else if (role === "leader") {
+			ctx.ui.notify("QQ Bot: 强制 leader 但锁被占用，转为 follower", "warning");
+			await becomeFollower(ctx);
+		} else {
+			await becomeFollower(ctx);
+		}
+	}
 
+	function selfEntry(role: "leader" | "follower"): InstanceEntry {
+		return {
+			id: _instanceId,
+			pid: process.pid,
+			role,
+			startedAt: Date.now(),
+			heartbeatAt: Date.now(),
+			claimedSessions: [],
+		};
+	}
+
+	async function becomeLeader(ctx: ExtensionContext): Promise<void> {
+		_role = "leader";
 		lock.startHeartbeat(HEARTBEAT_INTERVAL_MS);
-		ctx.ui.notify("QQ Bot: 正在连接...", "info");
-
+		ctx.ui.notify("QQ Bot: 正在连接（leader）...", "info");
 		try {
 			_auth = createAuthManager(config.appId, config.appSecret);
 			await _auth.getToken();
@@ -218,65 +272,220 @@ export default function (pi: ExtensionAPI) {
 					saveSettings(_settings);
 					info(`设置已更新: ${JSON.stringify(update)}`);
 				},
+				claimSession: (s: QBSession) => claimSession(s),
 			});
 
 			_ws = createWsClient(_auth);
-
 			_ws.onMessage((qqMsg) => {
-				_lastActiveQqSession = qqMsg.session;
-				// 记忆默认会话，桌面端消息在 QQ 未发消息时也能转发
-				const sessionChanged =
-					!_settings.defaultSession ||
-					_settings.defaultSession.type !== qqMsg.session.type ||
-					_settings.defaultSession.id !== qqMsg.session.id;
-				if (sessionChanged) {
-					_settings = { ..._settings, defaultSession: qqMsg.session };
-					saveSettings(_settings);
-					info(`默认会话已更新: ${qqMsg.session.type}/${qqMsg.session.id}`);
-				} else if (_settings.defaultSession) {
-					// 同一会话：更新最新 msgId / eventId
-					const existing = _settings.defaultSession;
-					_settings = {
-						..._settings,
-						defaultSession: {
-							type: existing.type,
-							id: existing.id,
-							name: existing.name,
-							userId: existing.userId,
-							msgId: qqMsg.session.msgId,
-							eventId: qqMsg.eventId,
-						},
-					};
-					saveSettings(_settings);
-				}
-				debug(
-					`收到 QQ 消息: [${qqMsg.session.type}] ${qqMsg.content.slice(0, 100)}`,
-				);
-
-				_cmdHandler?.tryHandle(qqMsg.content, qqMsg.session).then((isCmd) => {
-					if (!isCmd) {
-						const fromTag = qqMsg.session.type === "c2c" ? "QQ" : "QQ群";
-						pi.sendUserMessage(`[${fromTag}] ${qqMsg.content}`);
-						info(`转发到 pi: [${fromTag}] ${qqMsg.content.slice(0, 100)}`);
-					} else {
-						debug(`QQ 命令已处理: ${qqMsg.content}`);
+				const claimer = findClaimer(`${qqMsg.session.type}:${qqMsg.session.id}`);
+				if (claimer && claimer.id !== _instanceId && _ipcServer?.has(claimer.id)) {
+					const ok = _ipcServer.sendTo(claimer.id, {
+						type: "inbound",
+						session: qqMsg.session,
+						content: qqMsg.content,
+						fromTag: qqMsg.session.type === "c2c" ? "QQ" : "QQ群",
+					});
+					if (ok) {
+						debug(`QQ 入站转发给 follower ${claimer.id}`);
+						return;
 					}
-				});
+				}
+				handleInboundQqMessage(qqMsg);
 			});
-
 			_ws.onEvent((event) => {
 				debug(`QQ 事件: ${event}`);
 			});
 
+			// 启动 IPC 服务，接收 follower 的注册/认领/出站请求
+			_ipcServer = createIpcServer(LEADER_SOCK_PATH, {
+				onRegister: (entry) => upsertInstance(entry),
+				onClaim: (sessionKey, instanceId) => setClaim(instanceId, sessionKey),
+				onOutbound: (msg) => {
+					if (_api) {
+						_api.sendMarkdown(msg.target, msg.content, msg.replyTo).catch((e) => logError(`leader 转发失败: ${e}`));
+					}
+				},
+				// follower 仅连接断开：保留 registry 中的认领，待其重连后由 upsertInstance 恢复；
+				// 若 follower 进程真的退出，pruneDead 会按 pid 清理该实例。
+				onDisconnect: (instanceId) => {
+					debug(`follower ${instanceId} 连接断开（保留认领，待重连恢复）`);
+				},
+			});
+			setLeader(_instanceId, LEADER_SOCK_PATH);
+			upsertInstance(selfEntry("leader"));
+			_registryTimer = setInterval(() => {
+				pruneDead();
+				touchInstance(_instanceId);
+			}, HEARTBEAT_INTERVAL_MS);
+
 			await _ws.connect();
-			ctx.ui.notify("QQ Bot: 已连接 ✅", "info");
+			ctx.ui.notify("QQ Bot: 已连接 ✅（leader）", "info");
 		} catch (err) {
 			logError(`初始化失败: ${err}`);
 			ctx.ui.notify(`QQ Bot: 连接失败 ❌ — ${(err as Error).message}`, "error");
+			// 失败时清掉半初始化状态，避免残留 _role=leader / 锁心跳导致其它实例卡在 follower
+			await teardown();
 		}
 	}
 
-	async function disconnect(ctx: ExtensionCommandContext): Promise<void> {
+	async function becomeFollower(ctx: ExtensionContext): Promise<void> {
+		_role = "follower";
+		_followerStop = false;
+		ctx.ui.notify("QQ Bot: 作为 follower 连接 leader...", "info");
+
+		// follower 没有真实 QQ 连接：所有出站都经 IPC 转给 leader 代发
+		const followerApi: ApiClient = {
+			async sendMarkdown(session, markdown, replyTo) {
+				await sendToQq(session, markdown, replyTo);
+				return {} as SendMessageResponse;
+			},
+			async sendText(session, text, replyTo) {
+				await sendToQq(session, text, replyTo);
+				return {} as SendMessageResponse;
+			},
+			async sendMessage(session, text, options) {
+				await sendToQq(
+					session,
+					text,
+					options ? { msgId: options.msgId, eventId: options.eventId } : undefined,
+				);
+				return {} as SendMessageResponse;
+			},
+		};
+
+		_sm = createSessionManager();
+		_cmdHandler = createCommandHandler(followerApi, _sm, {
+			sendUserMessage: (text: string) => pi.sendUserMessage(text),
+			switchSession: () => {},
+			newSession: () => {},
+			clearSession: () => {},
+			getSettings: () => _settings,
+			updateSettings: (update: Partial<QqSettings>) => {
+				_settings = { ..._settings, ...update };
+				saveSettings(_settings);
+				info(`设置已更新: ${JSON.stringify(update)}`);
+			},
+			claimSession: (s: QBSession) => claimSession(s),
+		});
+
+		tryFollower(ctx);
+	}
+
+	function tryFollower(ctx: ExtensionContext): void {
+		if (_followerStop) return;
+		if (_ipcClient) {
+			try { _ipcClient.close(); } catch { /* 忽略已断开的 client */ }
+			_ipcClient = null;
+		}
+		const sock = getLeaderSock();
+		if (!sock) {
+			scheduleRetryFollower(ctx);
+			return;
+		}
+		const client = createIpcClient(sock, {
+			onConnect: () => {
+				client.send({ type: "register", entry: selfEntry("follower") });
+				info(`已连接 leader（follower）`);
+				ctx.ui.notify("QQ Bot: 已连接 leader ✅（follower）", "info");
+			},
+			onInbound: (msg) => {
+				handleInboundQqMessage({ session: msg.session, content: msg.content });
+			},
+			onClose: () => {
+				if (_followerStop) return;
+				ctx.ui.notify("QQ Bot: 与 leader 断开，正在重连...", "info");
+				scheduleRetryFollower(ctx);
+			},
+		});
+		_ipcClient = client;
+	}
+
+	function scheduleRetryFollower(ctx: ExtensionContext): void {
+		if (_followerStop || _followerRetryTimer) return;
+		_followerRetryTimer = setTimeout(() => {
+			_followerRetryTimer = null;
+			if (_followerStop) return;
+			tryFollower(ctx);
+		}, 2000);
+	}
+
+	async function sendToQq(
+		target: QBSession,
+		content: string,
+		replyTo?: { msgId?: string; eventId?: string },
+	): Promise<void> {
+		claimSession(target);
+		if (_role === "leader" && _api) {
+			try {
+				await _api.sendMarkdown(target, content, replyTo);
+			} catch (err) {
+				logError(`回复发送失败: ${err}`);
+			}
+		} else if (_role === "follower" && _ipcClient) {
+			_ipcClient.send({ type: "outbound", target, content, replyTo });
+		} else {
+			debug(`sendToQq 跳过: role=${_role}, api=${!!_api}`);
+		}
+	}
+
+	function claimSession(session: QBSession): void {
+		const key = `${session.type}:${session.id}`;
+		if (_role === "leader") setClaim(_instanceId, key);
+		else if (_role === "follower" && _ipcClient) _ipcClient.send({ type: "claim", sessionKey: key });
+	}
+
+	async function handleInboundQqMessage(qqMsg: { session: QBSession; content: string }): Promise<void> {
+		_lastActiveQqSession = qqMsg.session;
+		const sessionChanged =
+			!_settings.defaultSession ||
+			_settings.defaultSession.type !== qqMsg.session.type ||
+			_settings.defaultSession.id !== qqMsg.session.id;
+		if (sessionChanged) {
+			_settings = { ..._settings, defaultSession: qqMsg.session };
+			saveSettings(_settings);
+			info(`默认会话已更新: ${qqMsg.session.type}/${qqMsg.session.id}`);
+		} else if (_settings.defaultSession) {
+			const existing = _settings.defaultSession;
+			_settings = {
+				..._settings,
+				defaultSession: {
+					type: existing.type,
+					id: existing.id,
+					name: existing.name,
+					userId: existing.userId,
+					msgId: qqMsg.session.msgId,
+					eventId: qqMsg.session.eventId,
+				},
+			};
+			saveSettings(_settings);
+		}
+		claimSession(qqMsg.session);
+		debug(`收到 QQ 消息: [${qqMsg.session.type}] ${qqMsg.content.slice(0, 100)}`);
+
+		const handled = _cmdHandler?.tryHandle(qqMsg.content, qqMsg.session);
+		if (handled) {
+			handled.then((isCmd) => {
+				if (!isCmd) {
+					const fromTag = qqMsg.session.type === "c2c" ? "QQ" : "QQ群";
+					pi.sendUserMessage(`[${fromTag}] ${qqMsg.content}`);
+					info(`转发到 pi: [${fromTag}] ${qqMsg.content.slice(0, 100)}`);
+				} else {
+					debug(`QQ 命令已处理: ${qqMsg.content}`);
+				}
+			}).catch((e) => logError(`QQ 命令处理失败: ${e}`));
+		} else {
+			// 无命令处理器兜底：当作普通消息转发给 pi
+			const fromTag = qqMsg.session.type === "c2c" ? "QQ" : "QQ群";
+			pi.sendUserMessage(`[${fromTag}] ${qqMsg.content}`);
+		}
+	}
+
+async function disconnect(ctx: ExtensionContext): Promise<void> {
+		await teardown();
+		ctx.ui.notify("QQ Bot: 已断开 🔌", "info");
+	}
+
+	async function teardown(): Promise<void> {
 		if (_ws) {
 			_ws.disconnect();
 			_ws = null;
@@ -287,8 +496,29 @@ export default function (pi: ExtensionAPI) {
 		_sm = null;
 		_cmdHandler = null;
 		lock.stopHeartbeat();
-		await lock.release();
-		ctx.ui.notify("QQ Bot: 已断开 🔌", "info");
+		if (_registryTimer) {
+			clearInterval(_registryTimer);
+			_registryTimer = null;
+		}
+		if (_ipcServer) {
+			_ipcServer.close();
+			_ipcServer = null;
+		}
+		if (_ipcClient) {
+			_ipcClient.close();
+			_ipcClient = null;
+		}
+		_followerStop = true;
+		if (_followerRetryTimer) {
+			clearTimeout(_followerRetryTimer);
+			_followerRetryTimer = null;
+		}
+		if (_role === "leader") {
+			clearLeader();
+			removeInstance(_instanceId);
+		}
+		_role = null;
+		if (lock.getDiagnostics().isOwner) await lock.release();
 	}
 
 	// ── Slash 命令 ──
@@ -296,7 +526,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("qq-connect", {
 		description: "连接 QQ Bot",
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
-			if (_ws?.getDiagnostics().connected) {
+			if (_role) {
 				ctx.ui.notify("QQ Bot: 已经连接了", "info");
 				return;
 			}
@@ -307,7 +537,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("qq-disconnect", {
 		description: "断开 QQ Bot",
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
-			if (!_ws) {
+			if (!_role) {
 				ctx.ui.notify("QQ Bot: 未连接", "info");
 				return;
 			}
@@ -325,6 +555,9 @@ export default function (pi: ExtensionAPI) {
 
 			lines.push(
 				`${lockDiag.isOwner ? "🔒" : "🔓"} **锁**: ${lockDiag.isOwner ? "持有中" : "未持有"}`,
+			);
+			lines.push(
+				`👥 **角色**: ${_role ? (_role === "leader" ? "🔑 leader（持有 QQ 连接）" : "👤 follower（经 IPC 委派）") : "未连接"}`,
 			);
 
 			if (wsDiag) {
@@ -483,8 +716,22 @@ export default function (pi: ExtensionAPI) {
 
 	// ── 事件 ──
 
-	pi.on("session_start", async () => {
-		// 不再自动连接，提示用户
+	pi.on("session_start", async (_event, ctx) => {
+		// 启动自动连接（默认开启，可用配置 autoConnect:false 关闭）
+		const autoConnect = config.autoConnect ?? true;
+		if (!autoConnect) {
+			debug("自动连接已禁用（autoConnect=false），跳过");
+			return;
+		}
+		if (_role) {
+			debug("已连接，跳过自动连接");
+			return;
+		}
+		try {
+			await connect(ctx);
+		} catch (err) {
+			logError(`自动连接失败: ${err}`);
+		}
 	});
 
 	// 转发桌面端用户消息到 QQ
@@ -497,11 +744,6 @@ export default function (pi: ExtensionAPI) {
 			debug(`桌面转发跳过: forwardDesktopMessages=false`);
 			return;
 		}
-		if (!_api) {
-			debug(`桌面转发跳过: _api=null`);
-			return;
-		}
-
 		const target = _lastActiveQqSession ?? _settings.defaultSession;
 		if (!target) {
 			debug(`桌面转发跳过: 没有可用目标 (lastActive=${!!_lastActiveQqSession}, default=${!!_settings.defaultSession})`);
@@ -528,7 +770,7 @@ export default function (pi: ExtensionAPI) {
 			warn(`桌面消息将以主动消息发送；若未收到，请检查 Bot 主动消息权限，或在 QQ 里发送 #target 刷新被动回复凭据`);
 		}
 		try {
-			await _api.sendMarkdown(target, `**🖥 桌面端:** ${content}`, replyTo);
+			await sendToQq(target, `**🖥 桌面端:** ${content}`, replyTo);
 			info(`桌面消息已转发到 QQ: ${content.slice(0, 100)}`);
 		} catch (err) {
 			logError(`桌面消息转发失败: ${err}`);
@@ -546,8 +788,8 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		const target = _lastActiveQqSession ?? _settings.defaultSession;
-		if (!target || !_api) {
-			debug(`pi 回复跳过: 没有可用目标或 API`);
+		if (!target) {
+			debug(`pi 回复跳过: 没有可用目标`);
 			return;
 		}
 
@@ -560,7 +802,7 @@ export default function (pi: ExtensionAPI) {
 			? { msgId: target.msgId, eventId: target.eventId }
 			: undefined;
 		try {
-			await _api.sendMarkdown(target, content, replyTo);
+			await sendToQq(target, content, replyTo);
 			info(`已发回 QQ [${target.type}]: ${content.slice(0, 100)}`);
 		} catch (err) {
 			logError(`回复发送失败: ${err}`);
@@ -584,8 +826,8 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		const target = _lastActiveQqSession ?? _settings.defaultSession;
-		if (!target || !_api) {
-			debug(`agent_settled 转发跳过: 没有可用目标或 API`);
+		if (!target) {
+			debug(`agent_settled 转发跳过: 没有可用目标`);
 			return;
 		}
 
@@ -601,7 +843,7 @@ export default function (pi: ExtensionAPI) {
 			? { msgId: target.msgId, eventId: target.eventId }
 			: undefined;
 		try {
-			await _api.sendMarkdown(target, content, replyTo);
+			await sendToQq(target, content, replyTo);
 			info(`已发回 QQ (最后一条) [${target.type}]: ${content.slice(0, 100)}`);
 		} catch (err) {
 			logError(`agent_settled 转发失败: ${err}`);
@@ -613,7 +855,7 @@ export default function (pi: ExtensionAPI) {
 		if (!_settings.forwardToolCalls) return;
 
 		const target = _lastActiveQqSession ?? _settings.defaultSession;
-		if (!target || !_api) return;
+		if (!target) return;
 
 		const toolName = event.toolName || "unknown";
 		const input = event.input ?? {};
@@ -623,7 +865,7 @@ export default function (pi: ExtensionAPI) {
 			? { msgId: target.msgId, eventId: target.eventId }
 			: undefined;
 		try {
-			await _api.sendMarkdown(
+			await sendToQq(
 				target,
 				`**🛠 ${toolName}**\n${inputLines}`,
 				replyTo,
@@ -639,7 +881,7 @@ export default function (pi: ExtensionAPI) {
 		if (!_settings.forwardToolCalls) return;
 
 		const target = _lastActiveQqSession ?? _settings.defaultSession;
-		if (!target || !_api) return;
+		if (!target) return;
 
 		const text = extractTextFromContent(event.content);
 		if (!text.trim()) return;
@@ -648,7 +890,7 @@ export default function (pi: ExtensionAPI) {
 			? { msgId: target.msgId, eventId: target.eventId }
 			: undefined;
 		try {
-			await _api.sendMarkdown(
+			await sendToQq(
 				target,
 				`**📤 结果** \n\`\`\`\n${text}\n\`\`\``,
 				replyTo,
@@ -660,16 +902,6 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", async () => {
-		if (_ws) {
-			_ws.disconnect();
-			_ws = null;
-		}
-		_auth?.stopRefresh();
-		_auth = null;
-		_api = null;
-		_sm = null;
-		_cmdHandler = null;
-		lock.stopHeartbeat();
-		await lock.release();
+		await teardown();
 	});
 }

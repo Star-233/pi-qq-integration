@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.6
+
+- 新增多实例支持（方案 A：文件锁选举 + 本地 Unix socket IPC 委派）：
+  - 多个 pi 实例共享一个 QQ Bot 连接——抢到文件锁的为 leader（持有 QQ WebSocket），其余为 follower（经本地 IPC 把 QQ 收发委托给 leader），避免多实例各自连接被踢。
+  - 新增 `registry.ts`（实例注册表）与 `ipc.ts`（IPC 服务/客户端）。
+  - `config.role` 可强制 `auto`/`leader`/`follower`；`config.instanceId` 可固定实例 ID。
+  - QQ 入站按会话认领（claim）路由到对应 follower；出站经 IPC 转 leader 发送。
+- 新增 `autoConnect` 配置项（默认 `true`）：pi 启动时自动连接 QQ Bot；设为 `false` 则需手动 `/qq-connect`（撤销了 0.3.5 的“不自动连接”行为）。
+- 更新 README：新增完整「配置项」章节，列出全部可配置字段（appId/appSecret/instanceId/role/autoConnect 及 settings 各项）。
+
 ## 0.3.5
 
 - 修正 README 中“pi 启动时自动连接 QQ Bot”的错误描述，实际需手动输入 `/qq-connect` 连接。

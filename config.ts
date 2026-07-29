@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { hostname } from "node:os";
 import type { QQBotConfig, QqSettings } from "./types.js";
 import { DEFAULT_QQ_SETTINGS } from "./types.js";
 
@@ -28,6 +29,24 @@ export function loadConfig(configPath?: string): QQBotConfig {
 
   _config = parsed as QQBotConfig;
   return _config;
+}
+
+/** 读取多实例配置（实例 ID 与角色） */
+export function loadMultiInstanceConfig(): { instanceId: string; role: "auto" | "leader" | "follower" } {
+  const path = DEFAULT_CONFIG_PATH;
+  let parsed: Partial<QQBotConfig> = {};
+  try {
+    if (existsSync(path)) parsed = JSON.parse(readFileSync(path, "utf-8")) as Partial<QQBotConfig>;
+  } catch {
+    // 忽略
+  }
+  const role: "auto" | "leader" | "follower" =
+    parsed.role === "leader" || parsed.role === "follower" ? parsed.role : "auto";
+  const instanceId =
+    parsed.instanceId && parsed.instanceId.trim()
+      ? parsed.instanceId.trim()
+      : `${hostname()}-${process.pid}`;
+  return { instanceId, role };
 }
 
 /** 从配置文件中读取转发设置 */
