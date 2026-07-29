@@ -149,7 +149,11 @@ export default function (pi) {
     let _followerRetryTimer = null;
     // ── 连接/断开 ──
     // ── 连接/断开（多实例：leader 持 QQ 连接，follower 经 IPC 委派）──
-    const LEADER_SOCK_PATH = `${homedir()}/.pi/agent/qq-integration/instances/${process.pid}.sock`;
+    // Windows 上 node:net 的 IPC 走命名管道，路径必须形如 \\.\pipe\... 或 \\?\pipe\...
+    // （见 https://nodejs.org/api/net.html）。传文件系统路径会在 bind 阶段抛 EACCES。
+    const LEADER_SOCK_PATH = process.platform === "win32"
+        ? `\\.\pipe\pi-qq-${process.pid}`
+        : `${homedir()}/.pi/agent/qq-integration/instances/${process.pid}.sock`;
     async function connect(ctx) {
         if (_role) {
             ctx.ui.notify("QQ Bot: 已经连接了", "info");
@@ -255,6 +259,7 @@ export default function (pi) {
                     debug(`follower ${instanceId} 连接断开（保留认领，待重连恢复）`);
                 },
             });
+            await _ipcServer.ready;
             setLeader(_instanceId, LEADER_SOCK_PATH);
             upsertInstance(selfEntry("leader"));
             _registryTimer = setInterval(() => {

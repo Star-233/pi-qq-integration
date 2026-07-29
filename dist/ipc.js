@@ -60,8 +60,17 @@ export function createIpcServer(sockPath, handlers) {
             // 忽略
         });
     });
-    server.listen(sockPath);
+    // Windows 上 IPC 必须用命名管道路径；listen 异步失败需向上冒泡（参见 ready Promise），
+    // 否则无 'error' 监听时会升级为 uncaughtException 拖崩宿主进程。
+    const ready = new Promise((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(sockPath, () => {
+            server.on("error", () => { });
+            resolve();
+        });
+    });
     return {
+        ready,
         sendTo(instanceId, env) {
             const sock = conns.get(instanceId);
             if (!sock)
