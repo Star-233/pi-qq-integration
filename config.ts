@@ -43,6 +43,8 @@ export function loadSettings(): QqSettings {
           parsed.settings.forwardDesktopMessages ?? DEFAULT_QQ_SETTINGS.forwardDesktopMessages,
         forwardToolCalls:
           parsed.settings.forwardToolCalls ?? DEFAULT_QQ_SETTINGS.forwardToolCalls,
+        lastMessageOnly:
+          parsed.settings.lastMessageOnly ?? DEFAULT_QQ_SETTINGS.lastMessageOnly,
         defaultSession:
           parsed.settings.defaultSession ?? DEFAULT_QQ_SETTINGS.defaultSession,
       };

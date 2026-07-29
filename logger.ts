@@ -1,8 +1,8 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 
 const LOG_FILE = "/home/nullsky/.pi/agent/qq-integration.log";
-const MAX_SIZE = 5 * 1024 * 1024; // 5MB，超过则清空重写
+const MAX_SIZE = 5 * 1024 * 1024; // 5MB，超过则循环覆盖（清空重写并写标记）
 
 let _logBuffer: string[] = [];
 const MAX_BUFFER = 200; // 内存保留最近 200 条，供 /qq-logs 查看
@@ -17,8 +17,10 @@ function ensureLogDir(): void {
 function rotateIfNeeded(): void {
   try {
     if (existsSync(LOG_FILE) && statSync(LOG_FILE).size > MAX_SIZE) {
-      // 简单处理：超过大小就清空
-      appendFileSync(LOG_FILE, `[${timestamp()}] [INFO] 日志文件超过 5MB，已截断\n`);
+      const marker =
+        `[${timestamp()}] [INFO] 日志已达 ${Math.round(MAX_SIZE / 1024 / 1024)}MB，` +
+        `已循环覆盖（旧日志已丢弃）\n`;
+      writeFileSync(LOG_FILE, marker, "utf-8"); // 截断清空并以标记作为新文件首行
     }
   } catch {
     // 忽略
@@ -76,7 +78,7 @@ export function readRecentLines(n: number = 30): string[] {
   // 缓冲区不够再从文件补
   try {
     if (!existsSync(LOG_FILE)) return _logBuffer;
-    const all = readFileSync(LOG_FILE, "utf-8").trim().split("\n");
+    const all = readFileSync(LOG_FILE, "utf-8").trim().split("\n").filter(Boolean);
     const combined = [..._logBuffer];
 
     // 从文件尾部找不在缓冲区中的行
@@ -106,7 +108,7 @@ export function getLogPath(): string {
 export function clearLog(): void {
   _logBuffer = [];
   try {
-    appendFileSync(LOG_FILE, "", "utf-8");
+    writeFileSync(LOG_FILE, "", "utf-8"); // 真正清空文件（append 空串无法截断原有内容）
   } catch {
     // 忽略
   }
