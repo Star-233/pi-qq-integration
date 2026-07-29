@@ -1,0 +1,12 @@
+import type { InstanceEntry, QQRegistry } from "./types.js";
+export declare function readRegistry(): QQRegistry;
+export declare function writeRegistry(reg: QQRegistry): void;
+export declare function upsertInstance(entry: InstanceEntry): void;
+export declare function removeInstance(id: string): void;
+export declare function setClaim(id: string, sessionKey: string): void;
+export declare function findClaimer(sessionKey: string): InstanceEntry | null;
+export declare function setLeader(id: string, sockPath: string): void;
+export declare function clearLeader(): void;
+export declare function getLeaderSock(): string | undefined;
+export declare function touchInstance(id: string): void;
+export declare function pruneDead(): void;

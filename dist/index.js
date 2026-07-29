@@ -1,0 +1,784 @@
+import { loadConfig, loadMultiInstanceConfig } from "./config.js";
+import { loadSettings, saveSettings } from "./config.js";
+import { createLockManager } from "./lock.js";
+import { createIpcServer, createIpcClient } from "./ipc.js";
+import { upsertInstance, removeInstance, setClaim, findClaimer, setLeader, clearLeader, getLeaderSock, pruneDead, touchInstance, } from "./registry.js";
+import { createAuthManager } from "./auth.js";
+import { createWsClient } from "./ws-client.js";
+import { createApiClient } from "./api-client.js";
+import { createSessionManager } from "./session-manager.js";
+import { createCommandHandler } from "./command-handler.js";
+import { error as logError, info, warn, debug, readRecentLines, getLogPath, clearLog, } from "./logger.js";
+import { homedir } from "node:os";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const packageJson = require("../package.json");
+const LOCK_PATH = `${homedir()}/.pi/agent/qq-integration.lock`;
+const HEARTBEAT_INTERVAL_MS = 30_000;
+const EXTENSION_VERSION = packageJson.version;
+function stateLabel(state) {
+    switch (state) {
+        case "connected":
+            return "已连接";
+        case "connecting":
+            return "连接中";
+        case "disconnected":
+            return "已断开";
+        case "closing":
+            return "关闭中";
+        default:
+            return state;
+    }
+}
+function formatDuration(ms) {
+    const sec = Math.floor(ms / 1000);
+    const min = Math.floor(sec / 60);
+    const hr = Math.floor(min / 60);
+    if (hr > 0)
+        return `${hr}时${min % 60}分${sec % 60}秒`;
+    if (min > 0)
+        return `${min}分${sec % 60}秒`;
+    return `${sec}秒`;
+}
+function formatToolInput(input) {
+    return formatValue(input, 0);
+}
+function formatValue(value, depth = 0) {
+    const indent = "  ".repeat(depth);
+    if (value === null || value === undefined) {
+        return "`(空)`";
+    }
+    if (typeof value === "string") {
+        return `\`${escapeBackticks(value)}\``;
+    }
+    if (typeof value === "number" || typeof value === "boolean") {
+        return `\`${String(value)}\``;
+    }
+    if (Array.isArray(value)) {
+        if (value.length === 0) {
+            return "`(空数组)`";
+        }
+        return value
+            .map((item, index) => {
+            const formatted = formatValue(item, depth + 1);
+            if (typeof item === "object" && item !== null) {
+                return `${indent}- 第 ${index + 1} 项:\n${formatted}`;
+            }
+            return `${indent}- ${formatted}`;
+        })
+            .join("\n");
+    }
+    if (typeof value === "object") {
+        const entries = Object.entries(value);
+        if (entries.length === 0) {
+            return "`(空对象)`";
+        }
+        return entries
+            .map(([key, nestedValue]) => {
+            if (nestedValue !== null &&
+                nestedValue !== undefined &&
+                (typeof nestedValue === "object" || Array.isArray(nestedValue))) {
+                const formatted = formatValue(nestedValue, depth + 1);
+                return `${indent}- \`${key}\`:\n${formatted}`;
+            }
+            return `${indent}- \`${key}\`: ${formatValue(nestedValue, 0)}`;
+        })
+            .join("\n");
+    }
+    return `\`${escapeBackticks(String(value))}\``;
+}
+function escapeBackticks(text) {
+    return text.replace(/`/g, "\\`");
+}
+function isTextBlock(p) {
+    return (typeof p === "object" &&
+        p !== null &&
+        p.type === "text" &&
+        typeof p.text === "string");
+}
+function extractTextFromContent(content) {
+    if (typeof content === "string")
+        return content;
+    if (Array.isArray(content)) {
+        return content
+            .filter(isTextBlock)
+            .map((p) => p.text)
+            .join("\n");
+    }
+    return "";
+}
+function buildMsgSeqMap(settings, activeSession) {
+    const map = new Map();
+    if (settings.defaultSession?.msgId && settings.defaultSession.lastMsgSeq) {
+        map.set(settings.defaultSession.msgId, settings.defaultSession.lastMsgSeq);
+    }
+    if (activeSession?.msgId && activeSession.lastMsgSeq) {
+        map.set(activeSession.msgId, activeSession.lastMsgSeq);
+    }
+    return map;
+}
+export default function (pi) {
+    let config;
+    try {
+        config = loadConfig();
+    }
+    catch (err) {
+        logError(`配置加载失败: ${err.message}`);
+        return;
+    }
+    info(`pi-qq-integration 扩展加载: v${EXTENSION_VERSION}`);
+    const lock = createLockManager(LOCK_PATH);
+    let _ws = null;
+    let _auth = null;
+    let _api = null;
+    let _sm = null;
+    let _cmdHandler = null;
+    /** 转发设置 */
+    let _settings = loadSettings();
+    /** 最近一个发消息来的 QQ 会话（用于转发桌面消息和工具调用） */
+    let _lastActiveQqSession = null;
+    // ── 多实例状态 ──
+    const _multi = loadMultiInstanceConfig();
+    let _role = null;
+    const _instanceId = _multi.instanceId;
+    const _roleConfig = _multi.role;
+    let _ipcServer = null;
+    let _ipcClient = null;
+    let _registryTimer = null;
+    let _followerStop = false;
+    let _followerRetryTimer = null;
+    // ── 连接/断开 ──
+    // ── 连接/断开（多实例：leader 持 QQ 连接，follower 经 IPC 委派）──
+    const LEADER_SOCK_PATH = `${homedir()}/.pi/agent/qq-integration/instances/${process.pid}.sock`;
+    async function connect(ctx) {
+        if (_role) {
+            ctx.ui.notify("QQ Bot: 已经连接了", "info");
+            return;
+        }
+        const role = _roleConfig;
+        if (role === "follower") {
+            await becomeFollower(ctx);
+            return;
+        }
+        const isOwner = await lock.acquire();
+        if (isOwner) {
+            await becomeLeader(ctx);
+        }
+        else if (role === "leader") {
+            ctx.ui.notify("QQ Bot: 强制 leader 但锁被占用，转为 follower", "warning");
+            await becomeFollower(ctx);
+        }
+        else {
+            await becomeFollower(ctx);
+        }
+    }
+    function selfEntry(role) {
+        return {
+            id: _instanceId,
+            pid: process.pid,
+            role,
+            startedAt: Date.now(),
+            heartbeatAt: Date.now(),
+            claimedSessions: [],
+        };
+    }
+    async function becomeLeader(ctx) {
+        _role = "leader";
+        lock.startHeartbeat(HEARTBEAT_INTERVAL_MS);
+        ctx.ui.notify("QQ Bot: 正在连接（leader）...", "info");
+        try {
+            _auth = createAuthManager(config.appId, config.appSecret);
+            await _auth.getToken();
+            _auth.startRefresh();
+            _api = createApiClient(_auth, {
+                initialMsgSeqMap: buildMsgSeqMap(_settings, _lastActiveQqSession),
+                onSeqUpdate: (msgId, seq) => {
+                    let changed = false;
+                    if (_settings.defaultSession?.msgId === msgId) {
+                        _settings.defaultSession.lastMsgSeq = seq;
+                        changed = true;
+                    }
+                    if (_lastActiveQqSession?.msgId === msgId) {
+                        _lastActiveQqSession.lastMsgSeq = seq;
+                    }
+                    if (changed) {
+                        saveSettings(_settings);
+                    }
+                },
+            });
+            _sm = createSessionManager();
+            _cmdHandler = createCommandHandler(_api, _sm, {
+                sendUserMessage: (text) => pi.sendUserMessage(text),
+                switchSession: () => { },
+                newSession: () => { },
+                clearSession: () => { },
+                getSettings: () => _settings,
+                updateSettings: (update) => {
+                    _settings = { ..._settings, ...update };
+                    saveSettings(_settings);
+                    info(`设置已更新: ${JSON.stringify(update)}`);
+                },
+                claimSession: (s) => claimSession(s),
+            });
+            _ws = createWsClient(_auth);
+            _ws.onMessage((qqMsg) => {
+                const claimer = findClaimer(`${qqMsg.session.type}:${qqMsg.session.id}`);
+                if (claimer && claimer.id !== _instanceId && _ipcServer?.has(claimer.id)) {
+                    const ok = _ipcServer.sendTo(claimer.id, {
+                        type: "inbound",
+                        session: qqMsg.session,
+                        content: qqMsg.content,
+                        fromTag: qqMsg.session.type === "c2c" ? "QQ" : "QQ群",
+                    });
+                    if (ok) {
+                        debug(`QQ 入站转发给 follower ${claimer.id}`);
+                        return;
+                    }
+                }
+                handleInboundQqMessage(qqMsg);
+            });
+            _ws.onEvent((event) => {
+                debug(`QQ 事件: ${event}`);
+            });
+            // 启动 IPC 服务，接收 follower 的注册/认领/出站请求
+            _ipcServer = createIpcServer(LEADER_SOCK_PATH, {
+                onRegister: (entry) => upsertInstance(entry),
+                onClaim: (sessionKey, instanceId) => setClaim(instanceId, sessionKey),
+                onOutbound: (msg) => {
+                    if (_api) {
+                        _api.sendMarkdown(msg.target, msg.content, msg.replyTo).catch((e) => logError(`leader 转发失败: ${e}`));
+                    }
+                },
+                // follower 仅连接断开：保留 registry 中的认领，待其重连后由 upsertInstance 恢复；
+                // 若 follower 进程真的退出，pruneDead 会按 pid 清理该实例。
+                onDisconnect: (instanceId) => {
+                    debug(`follower ${instanceId} 连接断开（保留认领，待重连恢复）`);
+                },
+            });
+            setLeader(_instanceId, LEADER_SOCK_PATH);
+            upsertInstance(selfEntry("leader"));
+            _registryTimer = setInterval(() => {
+                pruneDead();
+                touchInstance(_instanceId);
+            }, HEARTBEAT_INTERVAL_MS);
+            await _ws.connect();
+            ctx.ui.notify("QQ Bot: 已连接 ✅（leader）", "info");
+        }
+        catch (err) {
+            logError(`初始化失败: ${err}`);
+            ctx.ui.notify(`QQ Bot: 连接失败 ❌ — ${err.message}`, "error");
+            // 失败时清掉半初始化状态，避免残留 _role=leader / 锁心跳导致其它实例卡在 follower
+            await teardown();
+        }
+    }
+    async function becomeFollower(ctx) {
+        _role = "follower";
+        _followerStop = false;
+        ctx.ui.notify("QQ Bot: 作为 follower 连接 leader...", "info");
+        // follower 没有真实 QQ 连接：所有出站都经 IPC 转给 leader 代发
+        const followerApi = {
+            async sendMarkdown(session, markdown, replyTo) {
+                await sendToQq(session, markdown, replyTo);
+                return {};
+            },
+            async sendText(session, text, replyTo) {
+                await sendToQq(session, text, replyTo);
+                return {};
+            },
+            async sendMessage(session, text, options) {
+                await sendToQq(session, text, options ? { msgId: options.msgId, eventId: options.eventId } : undefined);
+                return {};
+            },
+        };
+        _sm = createSessionManager();
+        _cmdHandler = createCommandHandler(followerApi, _sm, {
+            sendUserMessage: (text) => pi.sendUserMessage(text),
+            switchSession: () => { },
+            newSession: () => { },
+            clearSession: () => { },
+            getSettings: () => _settings,
+            updateSettings: (update) => {
+                _settings = { ..._settings, ...update };
+                saveSettings(_settings);
+                info(`设置已更新: ${JSON.stringify(update)}`);
+            },
+            claimSession: (s) => claimSession(s),
+        });
+        tryFollower(ctx);
+    }
+    function tryFollower(ctx) {
+        if (_followerStop)
+            return;
+        if (_ipcClient) {
+            try {
+                _ipcClient.close();
+            }
+            catch { /* 忽略已断开的 client */ }
+            _ipcClient = null;
+        }
+        const sock = getLeaderSock();
+        if (!sock) {
+            scheduleRetryFollower(ctx);
+            return;
+        }
+        const client = createIpcClient(sock, {
+            onConnect: () => {
+                client.send({ type: "register", entry: selfEntry("follower") });
+                info(`已连接 leader（follower）`);
+                ctx.ui.notify("QQ Bot: 已连接 leader ✅（follower）", "info");
+            },
+            onInbound: (msg) => {
+                handleInboundQqMessage({ session: msg.session, content: msg.content });
+            },
+            onClose: () => {
+                if (_followerStop)
+                    return;
+                ctx.ui.notify("QQ Bot: 与 leader 断开，正在重连...", "info");
+                scheduleRetryFollower(ctx);
+            },
+        });
+        _ipcClient = client;
+    }
+    function scheduleRetryFollower(ctx) {
+        if (_followerStop || _followerRetryTimer)
+            return;
+        _followerRetryTimer = setTimeout(() => {
+            _followerRetryTimer = null;
+            if (_followerStop)
+                return;
+            tryFollower(ctx);
+        }, 2000);
+    }
+    async function sendToQq(target, content, replyTo) {
+        claimSession(target);
+        if (_role === "leader" && _api) {
+            try {
+                await _api.sendMarkdown(target, content, replyTo);
+            }
+            catch (err) {
+                logError(`回复发送失败: ${err}`);
+            }
+        }
+        else if (_role === "follower" && _ipcClient) {
+            _ipcClient.send({ type: "outbound", target, content, replyTo });
+        }
+        else {
+            debug(`sendToQq 跳过: role=${_role}, api=${!!_api}`);
+        }
+    }
+    function claimSession(session) {
+        const key = `${session.type}:${session.id}`;
+        if (_role === "leader")
+            setClaim(_instanceId, key);
+        else if (_role === "follower" && _ipcClient)
+            _ipcClient.send({ type: "claim", sessionKey: key });
+    }
+    async function handleInboundQqMessage(qqMsg) {
+        _lastActiveQqSession = qqMsg.session;
+        const sessionChanged = !_settings.defaultSession ||
+            _settings.defaultSession.type !== qqMsg.session.type ||
+            _settings.defaultSession.id !== qqMsg.session.id;
+        if (sessionChanged) {
+            _settings = { ..._settings, defaultSession: qqMsg.session };
+            saveSettings(_settings);
+            info(`默认会话已更新: ${qqMsg.session.type}/${qqMsg.session.id}`);
+        }
+        else if (_settings.defaultSession) {
+            const existing = _settings.defaultSession;
+            _settings = {
+                ..._settings,
+                defaultSession: {
+                    type: existing.type,
+                    id: existing.id,
+                    name: existing.name,
+                    userId: existing.userId,
+                    msgId: qqMsg.session.msgId,
+                    eventId: qqMsg.session.eventId,
+                },
+            };
+            saveSettings(_settings);
+        }
+        claimSession(qqMsg.session);
+        debug(`收到 QQ 消息: [${qqMsg.session.type}] ${qqMsg.content.slice(0, 100)}`);
+        const handled = _cmdHandler?.tryHandle(qqMsg.content, qqMsg.session);
+        if (handled) {
+            handled.then((isCmd) => {
+                if (!isCmd) {
+                    const fromTag = qqMsg.session.type === "c2c" ? "QQ" : "QQ群";
+                    pi.sendUserMessage(`[${fromTag}] ${qqMsg.content}`);
+                    info(`转发到 pi: [${fromTag}] ${qqMsg.content.slice(0, 100)}`);
+                }
+                else {
+                    debug(`QQ 命令已处理: ${qqMsg.content}`);
+                }
+            }).catch((e) => logError(`QQ 命令处理失败: ${e}`));
+        }
+        else {
+            // 无命令处理器兜底：当作普通消息转发给 pi
+            const fromTag = qqMsg.session.type === "c2c" ? "QQ" : "QQ群";
+            pi.sendUserMessage(`[${fromTag}] ${qqMsg.content}`);
+        }
+    }
+    async function disconnect(ctx) {
+        await teardown();
+        ctx.ui.notify("QQ Bot: 已断开 🔌", "info");
+    }
+    async function teardown() {
+        if (_ws) {
+            _ws.disconnect();
+            _ws = null;
+        }
+        _auth?.stopRefresh();
+        _auth = null;
+        _api = null;
+        _sm = null;
+        _cmdHandler = null;
+        lock.stopHeartbeat();
+        if (_registryTimer) {
+            clearInterval(_registryTimer);
+            _registryTimer = null;
+        }
+        if (_ipcServer) {
+            _ipcServer.close();
+            _ipcServer = null;
+        }
+        if (_ipcClient) {
+            _ipcClient.close();
+            _ipcClient = null;
+        }
+        _followerStop = true;
+        if (_followerRetryTimer) {
+            clearTimeout(_followerRetryTimer);
+            _followerRetryTimer = null;
+        }
+        if (_role === "leader") {
+            clearLeader();
+            removeInstance(_instanceId);
+        }
+        _role = null;
+        if (lock.getDiagnostics().isOwner)
+            await lock.release();
+    }
+    // ── Slash 命令 ──
+    pi.registerCommand("qq-connect", {
+        description: "连接 QQ Bot",
+        handler: async (_args, ctx) => {
+            if (_role) {
+                ctx.ui.notify("QQ Bot: 已经连接了", "info");
+                return;
+            }
+            await connect(ctx);
+        },
+    });
+    pi.registerCommand("qq-disconnect", {
+        description: "断开 QQ Bot",
+        handler: async (_args, ctx) => {
+            if (!_role) {
+                ctx.ui.notify("QQ Bot: 未连接", "info");
+                return;
+            }
+            await disconnect(ctx);
+        },
+    });
+    pi.registerCommand("qq-status", {
+        description: "查看连接状态概览",
+        handler: async (_args, ctx) => {
+            const lockDiag = lock.getDiagnostics();
+            const wsDiag = _ws?.getDiagnostics();
+            const authDiag = _auth?.getDiagnostics();
+            const lines = [];
+            lines.push(`${lockDiag.isOwner ? "🔒" : "🔓"} **锁**: ${lockDiag.isOwner ? "持有中" : "未持有"}`);
+            lines.push(`👥 **角色**: ${_role ? (_role === "leader" ? "🔑 leader（持有 QQ 连接）" : "👤 follower（经 IPC 委派）") : "未连接"}`);
+            if (wsDiag) {
+                lines.push(`${wsDiag.connected ? "🟢" : "🔴"} **WebSocket**: ${stateLabel(wsDiag.state)}`);
+                if (wsDiag.uptimeMs !== null)
+                    lines.push(`⏱ **已运行**: ${formatDuration(wsDiag.uptimeMs)}`);
+            }
+            else {
+                lines.push("⚪ **WebSocket**: 未连接（用 `/qq-connect` 连接）");
+            }
+            if (authDiag) {
+                const ok = authDiag.hasToken && (authDiag.expiresInMs ?? 0) > 0;
+                lines.push(`${ok ? "✅" : "❌"} **Token**: ${ok ? "有效" : "无效"}`);
+            }
+            else {
+                lines.push("⚪ **Token**: 未初始化");
+            }
+            ctx.ui.notify(lines.join("\n"), "info");
+        },
+    });
+    pi.registerCommand("qq-diagnose", {
+        description: "查看详细诊断信息",
+        handler: async (_args, ctx) => {
+            const lockDiag = lock.getDiagnostics();
+            const wsDiag = _ws?.getDiagnostics();
+            const authDiag = _auth?.getDiagnostics();
+            const lines = [];
+            lines.push("**🔒 锁状态**");
+            lines.push(`- 持有锁: ${lockDiag.isOwner ? "✅ 是" : "❌ 否"}`);
+            lines.push(`- 锁文件存在: ${lockDiag.lockExists ? "✅" : "❌"}`);
+            lines.push(`- 锁文件 PID: ${lockDiag.currentPid ?? "(无)"}`);
+            lines.push(`- 本进程 PID: ${process.pid}`);
+            lines.push(`- 心跳活跃: ${lockDiag.heartbeatActive ? "✅" : "❌"}`);
+            lines.push("");
+            lines.push("**🌐 WebSocket 连接**");
+            if (wsDiag) {
+                lines.push(`- 状态: ${stateLabel(wsDiag.state)}`);
+                lines.push(`- Session ID: ${wsDiag.sessionId ?? "(无)"}`);
+                lines.push(`- 序列号: ${wsDiag.sequenceNumber}`);
+                lines.push(`- 心跳间隔: ${wsDiag.heartbeatIntervalMs}ms`);
+                lines.push(`- 上次心跳 ACK: ${wsDiag.lastHeartbeatAck ? new Date(wsDiag.lastHeartbeatAck).toLocaleTimeString("zh-CN") : "(无)"}`);
+                lines.push(`- 运行时长: ${wsDiag.uptimeMs !== null ? formatDuration(wsDiag.uptimeMs) : "(无)"}`);
+                lines.push(`- 重连次数: ${wsDiag.reconnectCount}`);
+            }
+            else {
+                lines.push("- 未连接（用 `/qq-connect` 连接）");
+            }
+            lines.push("");
+            lines.push("**🔑 Access Token**");
+            if (authDiag) {
+                lines.push(`- 有 Token: ${authDiag.hasToken ? "✅" : "❌"}`);
+                lines.push(`- 过期时间: ${authDiag.expiresAt ? new Date(authDiag.expiresAt).toLocaleString("zh-CN") : "(无)"}`);
+                lines.push(`- 剩余时间: ${authDiag.expiresInMs !== null ? formatDuration(authDiag.expiresInMs) : "(无)"}`);
+                lines.push(`- 上次刷新: ${authDiag.lastRefreshTime ? new Date(authDiag.lastRefreshTime).toLocaleString("zh-CN") : "(未刷新)"}`);
+            }
+            else {
+                lines.push("- 未初始化");
+            }
+            lines.push("");
+            lines.push("**⚙️ 配置**");
+            lines.push(`- AppID: \`${config?.appId ?? "(无)"}\``);
+            lines.push(`- 锁路径: \`${LOCK_PATH}\``);
+            ctx.ui.notify(lines.join("\n"), "info");
+        },
+    });
+    pi.registerCommand("qq-logs", {
+        description: "查看最近日志(30 条)",
+        handler: async (_args, ctx) => {
+            const lines = readRecentLines(30);
+            if (lines.length === 0) {
+                ctx.ui.notify("(无日志)", "info");
+                return;
+            }
+            ctx.ui.notify(`日志文件: ${getLogPath()}\n\n${lines.join("\n")}`, "info");
+        },
+    });
+    pi.registerCommand("qq-logs-path", {
+        description: "查看日志文件路径",
+        handler: async (_args, ctx) => {
+            ctx.ui.notify(`日志文件: ${getLogPath()}`, "info");
+        },
+    });
+    pi.registerCommand("qq-logs-clear", {
+        description: "清空日志文件",
+        handler: async (_args, ctx) => {
+            clearLog();
+            ctx.ui.notify(`日志已清空: ${getLogPath()}`, "info");
+        },
+    });
+    pi.registerCommand("qq-target", {
+        description: "设置/查看默认 QQ 转发目标",
+        handler: async (args, ctx) => {
+            const parts = args.trim().split(/\s+/);
+            const sub = parts[0]?.toLowerCase();
+            if (!sub || sub === "show") {
+                const t = _settings.defaultSession;
+                ctx.ui.notify(t
+                    ? `默认目标: \`${t.type}\` \`${t.id}\` (${t.name})`
+                    : "未设置默认目标。发送一条 QQ 消息，或用 `/qq-target <c2c|group|channel> <id> [name]` 手动设置。", "info");
+                return;
+            }
+            if (sub === "clear") {
+                _settings = { ..._settings, defaultSession: undefined };
+                saveSettings(_settings);
+                ctx.ui.notify("默认目标已清除", "info");
+                return;
+            }
+            const validTypes = ["c2c", "group", "channel"];
+            if (!validTypes.includes(sub)) {
+                ctx.ui.notify(`类型必须是 c2c / group / channel / clear / show。用法: /qq-target c2c <openid> [备注]`, "warning");
+                return;
+            }
+            const id = parts[1];
+            const name = parts.slice(2).join(" ") || id;
+            if (!id) {
+                ctx.ui.notify("缺少 ID。用法: /qq-target c2c <openid> [备注]", "warning");
+                return;
+            }
+            const session = { type: sub, id, name };
+            _settings = { ..._settings, defaultSession: session };
+            saveSettings(_settings);
+            ctx.ui.notify(`默认目标已设为: \`${sub}\` \`${id}\` (${name})`, "info");
+        },
+    });
+    // ── 事件 ──
+    pi.on("session_start", async (_event, ctx) => {
+        // 启动自动连接（默认开启，可用配置 autoConnect:false 关闭）
+        const autoConnect = config.autoConnect ?? true;
+        if (!autoConnect) {
+            debug("自动连接已禁用（autoConnect=false），跳过");
+            return;
+        }
+        if (_role) {
+            debug("已连接，跳过自动连接");
+            return;
+        }
+        try {
+            await connect(ctx);
+        }
+        catch (err) {
+            logError(`自动连接失败: ${err}`);
+        }
+    });
+    // 转发桌面端用户消息到 QQ
+    pi.on("message_end", async (event) => {
+        if (event.message.role !== "user") {
+            debug(`桌面转发跳过: role=${event.message.role}`);
+            return;
+        }
+        if (!_settings.forwardDesktopMessages) {
+            debug(`桌面转发跳过: forwardDesktopMessages=false`);
+            return;
+        }
+        const target = _lastActiveQqSession ?? _settings.defaultSession;
+        if (!target) {
+            debug(`桌面转发跳过: 没有可用目标 (lastActive=${!!_lastActiveQqSession}, default=${!!_settings.defaultSession})`);
+            return;
+        }
+        const content = extractTextFromContent(event.message.content);
+        // 跳过来自 QQ 的消息本身（[QQ] 和 [QQ群] 开头）
+        if (content.startsWith("[QQ")) {
+            debug(`桌面转发跳过: 内容来自 QQ 前缀`);
+            return;
+        }
+        if (!content.trim()) {
+            debug(`桌面转发跳过: 内容为空 (raw=${JSON.stringify(event.message.content).slice(0, 200)})`);
+            return;
+        }
+        const replyTo = target.msgId || target.eventId
+            ? { msgId: target.msgId, eventId: target.eventId }
+            : undefined;
+        info(`桌面端消息准备转发: target=${target.type}/${target.id}, replyTo=${JSON.stringify(replyTo)}, content=${content.slice(0, 100)}`);
+        if (!replyTo) {
+            warn(`桌面消息将以主动消息发送；若未收到，请检查 Bot 主动消息权限，或在 QQ 里发送 #target 刷新被动回复凭据`);
+        }
+        try {
+            await sendToQq(target, `**🖥 桌面端:** ${content}`, replyTo);
+            info(`桌面消息已转发到 QQ: ${content.slice(0, 100)}`);
+        }
+        catch (err) {
+            logError(`桌面消息转发失败: ${err}`);
+        }
+    });
+    // 转发 pi 回复到 QQ
+    pi.on("message_end", async (event) => {
+        if (event.message.role !== "assistant")
+            return;
+        // 开启 lastMessageOnly 时统一走 agent_settled，避免逐条重复转发
+        if (_settings.lastMessageOnly) {
+            debug(`pi 回复跳过: lastMessageOnly=true，等待 agent_settled 统一转发`);
+            return;
+        }
+        const target = _lastActiveQqSession ?? _settings.defaultSession;
+        if (!target) {
+            debug(`pi 回复跳过: 没有可用目标`);
+            return;
+        }
+        const content = extractTextFromContent(event.message.content);
+        if (!content.trim())
+            return;
+        debug(`pi 回复: ${content.slice(0, 100)}`);
+        const replyTo = target.msgId || target.eventId
+            ? { msgId: target.msgId, eventId: target.eventId }
+            : undefined;
+        try {
+            await sendToQq(target, content, replyTo);
+            info(`已发回 QQ [${target.type}]: ${content.slice(0, 100)}`);
+        }
+        catch (err) {
+            logError(`回复发送失败: ${err}`);
+        }
+    });
+    // 当开启 lastMessageOnly 时，整次 agent 运行结束后只转发最后一条 assistant 回复（一次）
+    pi.on("agent_settled", async (_event, ctx) => {
+        if (!_settings.lastMessageOnly)
+            return;
+        // agent_settled 不携带消息，需从会话条目中取最后一条 assistant
+        let lastAssistant;
+        for (const e of ctx.sessionManager.getEntries()) {
+            if (e.type === "message" && e.message.role === "assistant") {
+                lastAssistant = e.message;
+            }
+        }
+        if (!lastAssistant) {
+            debug(`agent_settled 转发跳过: 无 assistant 消息`);
+            return;
+        }
+        const target = _lastActiveQqSession ?? _settings.defaultSession;
+        if (!target) {
+            debug(`agent_settled 转发跳过: 没有可用目标`);
+            return;
+        }
+        const content = extractTextFromContent(lastAssistant.content);
+        if (!content.trim()) {
+            debug(`agent_settled 转发跳过: 内容为空`);
+            return;
+        }
+        debug(`agent_settled 转发: ${content.slice(0, 100)}`);
+        const replyTo = target.msgId || target.eventId
+            ? { msgId: target.msgId, eventId: target.eventId }
+            : undefined;
+        try {
+            await sendToQq(target, content, replyTo);
+            info(`已发回 QQ (最后一条) [${target.type}]: ${content.slice(0, 100)}`);
+        }
+        catch (err) {
+            logError(`agent_settled 转发失败: ${err}`);
+        }
+    });
+    // 转发工具调用到 QQ
+    pi.on("tool_call", async (event) => {
+        if (!_settings.forwardToolCalls)
+            return;
+        const target = _lastActiveQqSession ?? _settings.defaultSession;
+        if (!target)
+            return;
+        const toolName = event.toolName || "unknown";
+        const input = event.input ?? {};
+        const inputLines = formatToolInput(input);
+        const replyTo = target.msgId || target.eventId
+            ? { msgId: target.msgId, eventId: target.eventId }
+            : undefined;
+        try {
+            await sendToQq(target, `**🛠 ${toolName}**\n${inputLines}`, replyTo);
+            debug(`工具调用已转发到 QQ: ${toolName}`);
+        }
+        catch (err) {
+            logError(`工具调用转发失败: ${err}`);
+        }
+    });
+    // 转发工具执行结果到 QQ
+    pi.on("tool_result", async (event) => {
+        if (!_settings.forwardToolCalls)
+            return;
+        const target = _lastActiveQqSession ?? _settings.defaultSession;
+        if (!target)
+            return;
+        const text = extractTextFromContent(event.content);
+        if (!text.trim())
+            return;
+        const replyTo = target.msgId || target.eventId
+            ? { msgId: target.msgId, eventId: target.eventId }
+            : undefined;
+        try {
+            await sendToQq(target, `**📤 结果** \n\`\`\`\n${text}\n\`\`\``, replyTo);
+            debug(`工具结果已转发到 QQ`);
+        }
+        catch (err) {
+            logError(`工具结果转发失败: ${err}`);
+        }
+    });
+    pi.on("session_shutdown", async () => {
+        await teardown();
+    });
+}

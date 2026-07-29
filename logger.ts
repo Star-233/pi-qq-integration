@@ -1,7 +1,8 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 
-const LOG_FILE = "/home/nullsky/.pi/agent/qq-integration.log";
+const LOG_FILE = `${homedir()}/.pi/agent/qq-integration.log`;
 const MAX_SIZE = 5 * 1024 * 1024; // 5MB，超过则循环覆盖（清空重写并写标记）
 
 let _logBuffer: string[] = [];

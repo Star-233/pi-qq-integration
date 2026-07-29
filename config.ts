@@ -1,9 +1,9 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { hostname } from "node:os";
+import { homedir, hostname } from "node:os";
 import type { QQBotConfig, QqSettings } from "./types.js";
 import { DEFAULT_QQ_SETTINGS } from "./types.js";
 
-const DEFAULT_CONFIG_PATH = "/home/nullsky/.pi/agent/qq-integration-config.json";
+const DEFAULT_CONFIG_PATH = `${homedir()}/.pi/agent/qq-integration-config.json`;
 
 let _config: QQBotConfig | null = null;
 
