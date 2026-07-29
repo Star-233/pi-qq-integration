@@ -1,7 +1,8 @@
 import { writeFileSync, readFileSync, unlinkSync, existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { type LockFile, type LockManager, type LockDiagnostics } from "./types.js";
 
-const DEFAULT_LOCK_PATH = "/home/nullsky/.pi/agent/qq-integration.lock";
+const DEFAULT_LOCK_PATH = `${homedir()}/.pi/agent/qq-integration.lock`;
 
 /**
  * 基于文件的互斥锁。

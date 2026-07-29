@@ -36,12 +36,13 @@ import {
 	getLogPath,
 	clearLog,
 } from "./logger.js";
+import { homedir } from "node:os";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const packageJson = require("../package.json");
 
-const LOCK_PATH = "/home/nullsky/.pi/agent/qq-integration.lock";
+const LOCK_PATH = `${homedir()}/.pi/agent/qq-integration.lock`;
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const EXTENSION_VERSION = packageJson.version;
 
@@ -200,7 +201,7 @@ export default function (pi: ExtensionAPI) {
 
 		// ── 连接/断开（多实例：leader 持 QQ 连接，follower 经 IPC 委派）──
 
-	const LEADER_SOCK_PATH = `/home/nullsky/.pi/agent/qq-integration/instances/${process.pid}.sock`;
+	const LEADER_SOCK_PATH = `${homedir()}/.pi/agent/qq-integration/instances/${process.pid}.sock`;
 
 	async function connect(ctx: ExtensionContext): Promise<void> {
 		if (_role) {

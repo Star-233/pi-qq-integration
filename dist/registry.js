@@ -1,0 +1,128 @@
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { homedir } from "node:os";
+const REGISTRY_PATH = `${homedir()}/.pi/agent/qq-integration/registry.json`;
+function pidAlive(pid) {
+    try {
+        // kill(pid, 0) 仅检查进程是否存在，不发送信号
+        return process.kill(pid, 0);
+    }
+    catch {
+        return false;
+    }
+}
+export function readRegistry() {
+    try {
+        if (!existsSync(REGISTRY_PATH))
+            return { leader: null, instances: {} };
+        const raw = readFileSync(REGISTRY_PATH, "utf-8");
+        const parsed = JSON.parse(raw);
+        return {
+            leader: parsed.leader ?? null,
+            leaderSock: parsed.leaderSock,
+            instances: parsed.instances ?? {},
+        };
+    }
+    catch {
+        return { leader: null, instances: {} };
+    }
+}
+export function writeRegistry(reg) {
+    try {
+        writeFileSync(REGISTRY_PATH, JSON.stringify(reg, null, 2), "utf-8");
+    }
+    catch {
+        // 忽略写入失败
+    }
+}
+export function upsertInstance(entry) {
+    const reg = readRegistry();
+    const existing = reg.instances[entry.id];
+    // follower 重连时 selfEntry 的 claimedSessions 为空，保留已有的认领，避免重连后丢失
+    const claimedSessions = entry.claimedSessions.length === 0 && existing?.claimedSessions?.length
+        ? existing.claimedSessions
+        : entry.claimedSessions;
+    reg.instances[entry.id] = {
+        ...existing,
+        ...entry,
+        claimedSessions,
+        heartbeatAt: Date.now(),
+    };
+    writeRegistry(reg);
+}
+export function removeInstance(id) {
+    const reg = readRegistry();
+    delete reg.instances[id];
+    if (reg.leader === id) {
+        reg.leader = null;
+        reg.leaderSock = undefined;
+    }
+    writeRegistry(reg);
+}
+export function setClaim(id, sessionKey) {
+    const reg = readRegistry();
+    // 唯一所有者语义：先清除其他实例对该会话的认领，避免分裂脑
+    for (const inst of Object.values(reg.instances)) {
+        if (inst.id !== id) {
+            const idx = inst.claimedSessions.indexOf(sessionKey);
+            if (idx >= 0)
+                inst.claimedSessions.splice(idx, 1);
+        }
+    }
+    const inst = reg.instances[id];
+    if (!inst)
+        return;
+    if (!inst.claimedSessions.includes(sessionKey)) {
+        inst.claimedSessions = [...inst.claimedSessions, sessionKey];
+    }
+    writeRegistry(reg);
+}
+export function findClaimer(sessionKey) {
+    const reg = readRegistry();
+    for (const inst of Object.values(reg.instances)) {
+        if (inst.claimedSessions.includes(sessionKey))
+            return inst;
+    }
+    return null;
+}
+export function setLeader(id, sockPath) {
+    const reg = readRegistry();
+    reg.leader = id;
+    reg.leaderSock = sockPath;
+    if (reg.instances[id])
+        reg.instances[id].role = "leader";
+    writeRegistry(reg);
+}
+export function clearLeader() {
+    const reg = readRegistry();
+    reg.leader = null;
+    reg.leaderSock = undefined;
+    writeRegistry(reg);
+}
+export function getLeaderSock() {
+    return readRegistry().leaderSock;
+}
+export function touchInstance(id) {
+    const reg = readRegistry();
+    const e = reg.instances[id];
+    if (e) {
+        e.heartbeatAt = Date.now();
+        writeRegistry(reg);
+    }
+}
+export function pruneDead() {
+    const reg = readRegistry();
+    let changed = false;
+    for (const [id, inst] of Object.entries(reg.instances)) {
+        if (!pidAlive(inst.pid)) {
+            delete reg.instances[id];
+            changed = true;
+        }
+    }
+    if (reg.leader && (!reg.instances[reg.leader] || !pidAlive(reg.instances[reg.leader].pid))) {
+        reg.leader = null;
+        reg.leaderSock = undefined;
+        changed = true;
+    }
+    if (changed)
+        writeRegistry(reg);
+}

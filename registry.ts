@@ -1,7 +1,8 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { homedir } from "node:os";
 import type { InstanceEntry, QQRegistry } from "./types.js";
 
-const REGISTRY_PATH = "/home/nullsky/.pi/agent/qq-integration/registry.json";
+const REGISTRY_PATH = `${homedir()}/.pi/agent/qq-integration/registry.json`;
 
 function pidAlive(pid: number): boolean {
 	try {
