@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.5
+
+- 修正 README 中“pi 启动时自动连接 QQ Bot”的错误描述，实际需手动输入 `/qq-connect` 连接。
+
 ## 0.3.4
 
 - 修复 `lastMessageOnly` 转发重复问题：原实现监听 `turn_end` 事件，但 `turn_end` 每轮（turn）触发一次，agentic 模式下多步工具调用任务会在 QQ 中产生多条转发。
