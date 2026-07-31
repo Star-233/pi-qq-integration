@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.2
+
+- README: 重写为中英双版，英文在前默认。
+
 ## 0.4.1
 
 - 修复 `agent_settled` 事件处理器中访问 stale `ctx.sessionManager` 导致的崩溃（`lastMessageOnly=true` 时触发）。改为在 `message_end` 时缓存 assistant 消息内容，`agent_settled` 直接使用缓存，不再依赖可能过期的 ctx。
