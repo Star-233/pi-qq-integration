@@ -1,7 +1,7 @@
 {
   "name": "pi-qq-integration",
-  "version": "0.4.2",
-  "description": "QQ integration for pi — control pi from QQ",
+  "version": "0.4.3",
+  "description": "QQ integration for pi — control pi from QQ | pi QQ 集成 — 在 QQ 中操控 pi",
   "private": false,
   "type": "module",
   "main": "dist/index.js",
