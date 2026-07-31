@@ -27,13 +27,17 @@ export interface IpcServerOptions {
 }
 
 export function createIpcServer(sockPath: string, handlers: IpcServerOptions) {
-	const dir = dirname(sockPath);
-	if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-	if (existsSync(sockPath)) {
-		try {
-			unlinkSync(sockPath);
-		} catch {
-			// 忽略
+	// Windows 命名管道是临时资源（server 关闭即消失），无需文件系统目录创建/清理；
+	// 仅 Unix domain socket 需要 mkdir 目录 + unlink 残留 socket 文件。
+	if (process.platform !== "win32") {
+		const dir = dirname(sockPath);
+		if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+		if (existsSync(sockPath)) {
+			try {
+				unlinkSync(sockPath);
+			} catch {
+				// 忽略
+			}
 		}
 	}
 
@@ -85,9 +89,18 @@ export function createIpcServer(sockPath: string, handlers: IpcServerOptions) {
 		});
 	});
 
-	server.listen(sockPath);
+	// listen 异步失败以 'error' 事件触发，无监听会升级为 uncaughtException 拖崩宿主进程；
+	// 用 ready Promise 让调用方 await，失败时能被现有 try/catch 接住并走 teardown。
+	const ready = new Promise<void>((resolve, reject) => {
+		server.once("error", reject);
+		server.listen(sockPath, () => {
+			server.on("error", () => { /* 吞掉监听成功后的连接级错误 */ });
+			resolve();
+		});
+	});
 
 	return {
+		ready,
 		sendTo(instanceId: string, env: IpcEnvelope): boolean {
 			const sock = conns.get(instanceId);
 			if (!sock) return false;

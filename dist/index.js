@@ -153,7 +153,12 @@ export default function (pi) {
     let _followerRetryDelay = DEFAULTS.FOLLOWER_RETRY_MS;
     // ── 连接/断开 ──
     // ── 连接/断开（多实例：leader 持 QQ 连接，follower 经 IPC 委派）──
-    const LEADER_SOCK_PATH = `${PATHS.INSTANCE_SOCK_DIR}/${process.pid}.sock`;
+    // Windows 上 node:net 的 IPC 走命名管道，路径必须形如 \\.\pipe\... 或 \\?\pipe\...
+    // （见 https://nodejs.org/api/net.html#identifying-paths-for-ipc-connections）。
+    // JavaScript 字符串需额外反斜杠转义：源码 `\\.\pipe\...` 运行时才得到 `\\.\pipe\...`。
+    const LEADER_SOCK_PATH = process.platform === "win32"
+        ? `\\.\pipe\pi-qq-${process.pid}`
+        : `${PATHS.INSTANCE_SOCK_DIR}/${process.pid}.sock`;
     async function connect(ctx) {
         if (_role) {
             ctx.ui.notify("QQ Bot: 已经连接了", "info");
@@ -282,6 +287,7 @@ export default function (pi) {
                     _ipcServer?.broadcast({ type: "settings_changed", settings: _settings });
                 },
             });
+            await _ipcServer.ready;
             setLeader(_instanceId, LEADER_SOCK_PATH);
             upsertInstance(selfEntry("leader"));
             // 立即执行一次 pruneDead，清理上次残留的死实例

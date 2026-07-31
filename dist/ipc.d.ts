@@ -44,6 +44,7 @@ export interface IpcServerOptions {
     onSettingsUpdate?: (settings: QqSettings, instanceId: string) => void;
 }
 export declare function createIpcServer(sockPath: string, handlers: IpcServerOptions): {
+    ready: Promise<void>;
     sendTo(instanceId: string, env: IpcEnvelope): boolean;
     /** 向所有已连接的 follower 广播消息 */
     broadcast(env: IpcEnvelope): void;
