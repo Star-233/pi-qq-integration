@@ -186,6 +186,9 @@ export default function (pi: ExtensionAPI) {
 	/** 最近一个发消息来的 QQ 会话（用于转发桌面消息和工具调用） */
 	let _lastActiveQqSession: QBSession | null = null;
 
+	/** 缓存最后一条 assistant 消息内容（供 agent_settled 使用，避免访问 stale ctx） */
+	let _lastAssistantContent: unknown = null;
+
 	// ── 多实例状态 ──
 	const _multi = loadMultiInstanceConfig();
 	let _role: "leader" | "follower" | null = null;
@@ -542,6 +545,7 @@ async function disconnect(ctx: ExtensionContext): Promise<void> {
 		_api = null;
 		_sm = null;
 		_cmdHandler = null;
+		_lastAssistantContent = null;
 		lock.stopHeartbeat();
 		if (_registryTimer) {
 			clearInterval(_registryTimer);
@@ -837,6 +841,9 @@ async function disconnect(ctx: ExtensionContext): Promise<void> {
 	pi.on("message_end", async (event: MessageEndEvent) => {
 		if (event.message.role !== "assistant") return;
 
+		// 缓存最后一条 assistant 消息内容，供 agent_settled 使用（避免访问 stale ctx）
+		_lastAssistantContent = event.message.content;
+
 		// 开启 lastMessageOnly 时统一走 agent_settled，避免逐条重复转发
 		if (_settings.lastMessageOnly) {
 			debug(`pi 回复跳过: lastMessageOnly=true，等待 agent_settled 统一转发`);
@@ -866,18 +873,13 @@ async function disconnect(ctx: ExtensionContext): Promise<void> {
 	});
 
 	// 当开启 lastMessageOnly 时，整次 agent 运行结束后只转发最后一条 assistant 回复（一次）
-	pi.on("agent_settled", async (_event, ctx) => {
+	pi.on("agent_settled", async (_event, _ctx) => {
 		if (!_settings.lastMessageOnly) return;
 
-		// agent_settled 不携带消息，需从会话条目中取最后一条 assistant
-		let lastAssistant: { content: unknown } | undefined;
-		for (const e of ctx.sessionManager.getEntries()) {
-			if (e.type === "message" && e.message.role === "assistant") {
-				lastAssistant = e.message;
-			}
-		}
-		if (!lastAssistant) {
-			debug(`agent_settled 转发跳过: 无 assistant 消息`);
+		// 使用 message_end 缓存的最后一条 assistant 消息内容
+		// （避免访问 ctx.sessionManager，因为 ctx 在 session replacement/reload 后会 stale）
+		if (!_lastAssistantContent) {
+			debug(`agent_settled 转发跳过: 无缓存的 assistant 消息`);
 			return;
 		}
 
@@ -887,7 +889,8 @@ async function disconnect(ctx: ExtensionContext): Promise<void> {
 			return;
 		}
 
-		const content = extractTextFromContent(lastAssistant.content);
+		const content = extractTextFromContent(_lastAssistantContent);
+		_lastAssistantContent = null; // 消费后清空，避免重复转发
 		if (!content.trim()) {
 			debug(`agent_settled 转发跳过: 内容为空`);
 			return;
