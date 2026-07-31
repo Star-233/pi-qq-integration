@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.4.0
+
+**重大重构：消除全部硬编码 + 修复多实例/网络/并发场景下的 22 个问题。**
+
+### 新增
+- 新增 `constants.ts`：集中管理所有常量（路径、API 端点、超时值），支持环境变量 `QQ_INTEGRATION_DATA_DIR`、`QQ_API_BASE`、`QQ_TOKEN_API` 覆盖。
+- Settings IPC 同步机制：`#settings` 变更通过 leader 统一执行并广播给所有 follower，保持多实例内存状态一致。
+- Auth 致命错误机制：Token 连续刷新失败 3 次后自动断开连接并通知用户，避免静默退化为僵尸状态。
+- WS 鉴权失败回调 `onAuthFailed`：InvalidSession 时通知上层并 teardown。
+- IPC `broadcast()` 方法：leader 可向所有 follower 广播消息。
+
+### 修复
+- **锁 TOCTOU 竞态**：`lock.ts` 改用 `openSync(path, "wx")` 原子创建（O_EXCL），消除两进程同时抢到锁的可能。
+- **配置文件并发写入**：`config.ts` 和 `registry.ts` 改用 `atomicWrite`（写临时文件 + rename），消除 truncate 窗口导致配置损毁的风险。
+- **`saveSettings` JSON.parse 失败保护**：解析失败时放弃写入，保护 appId/appSecret 不被覆盖为空。
+- **WS `connect()` 过早 resolve**：延迟到 READY/RESUMED 事件后 resolve，确保 UI "已连接" 与实际鉴权状态一致。
+- **WS 重连无限循环**：增加指数退避（1s → 2s → ... → 60s 上限）。
+- **WS 超时未 terminate**：超时时 `ws.terminate()` 强制关闭半连接。
+- **WS close handler 竞争**：`if (_ws === ws)` 守卫防止旧 close 清空新连接引用。
+- **Follower 退避重试**：指数退避（2s → 4s → ... → 30s 上限），避免对死 socket 的固定间隔轮询。
+- **IPC server close**：主动 `destroy()` 所有已有连接，而非仅停监听。
+- **Follower teardown 自清 registry**：`removeInstance` 移到角色判断外，任何角色退出都清理自己的注册表条目。
+- **Leader 启动立即 pruneDead**：`becomeLeader` 后立即执行一次清理，消除 30 秒延迟窗口。
+
+### 重构
+- 全部硬编码路径、URL、超时值、数值常量收口到 `constants.ts`，支持环境变量覆盖。
+- 消除 `session-manager.ts` 中的 `"nullsky"` 用户名硬编码，改用 `userInfo().username`。
+- 所有文件移除 `homedir()` 直接调用，统一引用 `PATHS`/`DEFAULTS`。
+
 ## 0.3.6
 
 - 新增多实例支持（方案 A：文件锁选举 + 本地 Unix socket IPC 委派）：
@@ -7,107 +36,14 @@
   - 新增 `registry.ts`（实例注册表）与 `ipc.ts`（IPC 服务/客户端）。
   - `config.role` 可强制 `auto`/`leader`/`follower`；`config.instanceId` 可固定实例 ID。
   - QQ 入站按会话认领（claim）路由到对应 follower；出站经 IPC 转 leader 发送。
-- 新增 `autoConnect` 配置项（默认 `true`）：pi 启动时自动连接 QQ Bot；设为 `false` 则需手动 `/qq-connect`（撤销了 0.3.5 的“不自动连接”行为）。
+- 新增 `autoConnect` 配置项（默认 `true`）：pi 启动时自动连接 QQ Bot；设为 `false` 则需手动 `/qq-connect`（撤销了 0.3.5 的"不自动连接"行为）。
 - 更新 README：新增完整「配置项」章节，列出全部可配置字段（appId/appSecret/instanceId/role/autoConnect 及 settings 各项）。
 
 ## 0.3.5
 
-- 修正 README 中“pi 启动时自动连接 QQ Bot”的错误描述，实际需手动输入 `/qq-connect` 连接。
+- 修正 README 中"pi 启动时自动连接 QQ Bot"的错误描述，实际需手动输入 `/qq-connect` 连接。
 
 ## 0.3.4
 
 - 修复 `lastMessageOnly` 转发重复问题：原实现监听 `turn_end` 事件，但 `turn_end` 每轮（turn）触发一次，agentic 模式下多步工具调用任务会在 QQ 中产生多条转发。
 - 改用 `agent_settled` 事件（整次 agent 运行仅触发一次），从 `sessionManager.getEntries()` 取最后一条 assistant 消息转发，确保 QQ 只收到一条最终回复。
-- 保留 `message_end`(assistant) 在 `lastMessageOnly` 开启时的跳过逻辑，避免逐条重复转发。
-- 更新 README 与 `#settings` 提示文案，将“当前 turn”更正为“整次运行”。
-
-## 0.3.3
-
-- 新增 `lastMessageOnly` 转发设置：开启后只把 assistant 当前 turn 的最终文本回复转发到 QQ。
-- `lastMessageOnly` 与 `forwardTools` 互锁：开启前者时自动关闭后者，开启后者时自动关闭前者。
-- 新增 `turn_end` 事件监听，用于捕获每轮最终 assistant 回复。
-- 更新 README 中 `#settings` 命令说明。
-
-## 0.3.2
-
-- 从 `package.json` 动态读取版本号，避免版本号与发布版本不一致。
-
-## 0.3.1
-
-- 修正 `EXTENSION_VERSION` 常量与 `package.json` 版本不一致的问题。
-
-## 0.3.0
-
-- 重命名 npm 包为 `pi-qq-integration`，使名称更符合 pi 生态前缀约定。
-- 更新 GitHub 仓库地址、README 安装命令、package.json 中的 URL 和截图路径。
-
-## 0.2.12
-
-- 修复 `package.json` 中 `pi.image` 的分支路径（`main` → `master`）。
-
-## 0.2.11
-
-- 更新 `description` 为 "QQ integration for pi — control pi from QQ"，使描述与包名更契合。
-
-## 0.2.10
-
-- 增加扩展加载时的版本日志，便于排查运行版本。
-
-## 0.2.9
-
-- 修复重连后同一 `msg_id` 因 `msg_seq` 计数器重置而被去重的问题。
-- 为 `QBSession` 增加 `lastMsgSeq`，并在 `ApiClient` 初始化时从设置恢复。
-- 发送消息时递增 `msg_seq` 并持久化到设置。
-
-## 0.2.8
-
-- 修复 assistant 回复、工具调用、工具结果转发到 QQ 时未使用 `msg_id` 的问题。
-- 移除 `_pendingReplies` 队列，统一使用 `_lastActiveQqSession ?? _settings.defaultSession` 作为转发目标。
-- 桌面消息、assistant 回复、工具调用/结果共享同一目标及其 `msg_id`，确保 QQ 能正确送达。
-
-## 0.2.7
-
-- 增加 QQ API 响应体日志，便于诊断消息发送成功但未送达的问题。
-
-## 0.2.6
-
-- 修复同一 `msg_id` 多次回复被 QQ 去重的问题：为每个 `msg_id` 维护递增的 `msg_seq`。
-
-## 0.2.5
-
-- 保存 QQ 消息的最新 `msg_id` / `event_id`，桌面端转发时作为被动回复参数带上，解决主动消息无权限/被限制的问题。
-- C2C 会话使用 `user_openid` 作为 API 路径参数（符合 QQ Bot 文档）。
-
-## 0.2.4
-
-- 修复桌面端消息内容类型不兼容：pi 桌面用户消息的内容可能是 `TextContent[]` 数组，而不是字符串。
-- 桌面端转发统一使用 `extractTextFromContent()` 提取文本，兼容字符串和数组两种格式。
-
-## 0.2.3
-
-- 为桌面端消息转发路径增加详细日志，便于诊断转发未生效的原因。
-
-## 0.2.2
-
-- 新增 `/qq-target` slash 命令，支持手动设置/查看/清除默认 QQ 转发目标。
-- 新增 QQ 命令 `#target`，可将当前 QQ 会话设为默认转发目标。
-- 桌面端消息转发目标优先级：最近活跃 QQ 会话 → 手动设置的默认目标。
-- 完善 README 中桌面端消息转发说明。
-
-## 0.2.1
-
-- 修复桌面端消息转发 Bug：首次 QQ 消息到达前，桌面端消息没有目标会话而被丢弃。
-- 新增 `QqSettings.defaultSession`，在收到 QQ 消息时自动记忆会话目标并持久化。
-- 桌面端消息转发优先使用 `_lastActiveQqSession`，不存在时回退到 `_settings.defaultSession`。
-
-## 0.2.0
-
-- 重构为符合 pi 官方 package 规范的发布结构。
-- 新增 TypeScript 构建流程，发布产物为 `dist/` 下的 `.js` 与 `.d.ts`。
-- `main`、`types`、`exports`、`pi.extensions` 均指向 `dist/index.js`。
-- 移除本地 `pi-types.d.ts`，改为从 `@earendil-works/pi-coding-agent` 导入类型。
-- 添加 `LICENSE`、`CHANGELOG.md` 与 `files` 字段。
-
-## 0.1.14
-
-- 最后一个直接发布 TypeScript 源码的版本。

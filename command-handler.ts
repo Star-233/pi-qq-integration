@@ -2,6 +2,7 @@ import type { ApiClient } from "./api-client.js";
 import type { SessionManager } from "./session-manager.js";
 import type { QBSession, QqSettings } from "./types.js";
 import { debug, info } from "./logger.js";
+import { DEFAULTS } from "./constants.js";
 
 /**
  * QQ 消息中的命令处理器。
@@ -168,7 +169,7 @@ export function createCommandHandler(
 
   async function cmdHistory(session: QBSession, arg: string): Promise<void> {
     // 从当前 session 名读取
-    const n = parseInt(arg, 10) || 5;
+    const n = parseInt(arg, 10) || DEFAULTS.HISTORY_DEFAULT;
 
     // 获取当前 session 的信息 - 通过扫描找到最新的 session
     const sessions = sessionManager.listSessions();

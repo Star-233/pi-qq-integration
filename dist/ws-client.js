@@ -1,24 +1,28 @@
 import WebSocket from "ws";
 import { OpCode, } from "./types.js";
-import { debug, error as logError } from "./logger.js";
-const GATEWAY_API = "https://api.sgroup.qq.com/gateway";
-// C2C_MESSAGE_CREATE + GROUP_AT_MESSAGE_CREATE + FRIEND_ADD + GROUP_ADD_ROBOT
-const INTENTS = 1 << 25;
+import { debug, error as logError, warn } from "./logger.js";
+import { ENDPOINTS, DEFAULTS } from "./constants.js";
+const GATEWAY_API = ENDPOINTS.GATEWAY;
+const INTENTS = DEFAULTS.INTENTS;
+/** 指数退避上限 */
+const MAX_RECONNECT_DELAY_MS = 60_000;
 /**
  * QQ Bot WebSocket 客户端。
  * 管理连接、鉴权、心跳、断线重连（Resume）。
  */
-export function createWsClient(auth) {
+export function createWsClient(auth, options) {
     let _ws = null;
     let _sessionId = null;
     let _seq = 0;
-    let _heartbeatInterval = 45_000;
+    let _heartbeatInterval = DEFAULTS.WS_HEARTBEAT_MS;
     let _heartbeatTimer = null;
     let _reconnectTimer = null;
     let _intentionalClose = false;
     let _connectedAt = null;
     let _lastHeartbeatAck = null;
     let _reconnectCount = 0;
+    /** 当前重连延迟（指数退避） */
+    let _currentReconnectDelay = DEFAULTS.WS_RECONNECT_DELAY_MS;
     const _messageHandlers = [];
     const _eventHandlers = [];
     function onMessage(handler) {
@@ -68,7 +72,6 @@ export function createWsClient(auth) {
     async function onHello() {
         const token = await auth.getToken();
         if (_sessionId) {
-            // 断线重连：Resume
             sendPayload({
                 op: OpCode.Resume,
                 d: {
@@ -79,7 +82,6 @@ export function createWsClient(auth) {
             });
         }
         else {
-            // 首次连接：Identify
             sendPayload({
                 op: OpCode.Identify,
                 d: {
@@ -90,6 +92,23 @@ export function createWsClient(auth) {
             });
         }
     }
+    let _connectControl = null;
+    function resolveConnect() {
+        if (_connectControl) {
+            clearTimeout(_connectControl.timeout);
+            _connectControl.resolve();
+            _connectControl = null;
+            _currentReconnectDelay = DEFAULTS.WS_RECONNECT_DELAY_MS; // 重置退避
+            _connectedAt = Date.now();
+        }
+    }
+    function rejectConnect(err) {
+        if (_connectControl) {
+            clearTimeout(_connectControl.timeout);
+            _connectControl.reject(err);
+            _connectControl = null;
+        }
+    }
     function handlePayload(payload) {
         if (payload.s)
             _seq = payload.s;
@@ -98,7 +117,10 @@ export function createWsClient(auth) {
                 const hello = payload.d;
                 _heartbeatInterval = hello.heartbeat_interval;
                 startHeartbeat();
-                onHello().catch((err) => logError(`鉴权失败: ${err}`));
+                onHello().catch((err) => {
+                    logError(`鉴权请求发送失败: ${err}`);
+                    rejectConnect(err);
+                });
                 break;
             }
             case OpCode.Dispatch: {
@@ -111,8 +133,10 @@ export function createWsClient(auth) {
                 scheduleReconnect(0);
                 break;
             case OpCode.InvalidSession:
+                warn("[QQ Bot WS] InvalidSession — 鉴权被拒绝");
                 _sessionId = null;
-                scheduleReconnect(1000);
+                options?.onAuthFailed?.();
+                rejectConnect(new Error("QQ Bot 鉴权失败 (InvalidSession)"));
                 break;
         }
     }
@@ -123,10 +147,12 @@ export function createWsClient(auth) {
                 const ready = payload.d;
                 _sessionId = ready.session_id;
                 debug(`[QQ Bot WS] Ready - session_id: ${_sessionId}`);
+                resolveConnect(); // ← 鉴权真正成功，resolve connect()
                 break;
             }
             case "RESUMED":
                 debug("[QQ Bot WS] 断线重连成功");
+                resolveConnect(); // ← Resume 成功
                 break;
             case "C2C_MESSAGE_CREATE":
             case "GROUP_AT_MESSAGE_CREATE": {
@@ -172,18 +198,26 @@ export function createWsClient(auth) {
             _heartbeatTimer = null;
         }
     }
+    /** 指数退避重连：delay → delay*2 → delay*4 → ... → MAX_RECONNECT_DELAY_MS */
+    function nextReconnectDelay() {
+        const delay = _currentReconnectDelay;
+        _currentReconnectDelay = Math.min(delay * 2, MAX_RECONNECT_DELAY_MS);
+        return delay;
+    }
     function scheduleReconnect(delayMs) {
         if (_intentionalClose)
             return;
         stopHeartbeat();
         if (_reconnectTimer)
             clearTimeout(_reconnectTimer);
+        const actualDelay = delayMs > 0 ? delayMs : nextReconnectDelay();
+        debug(`[QQ Bot WS] 将在 ${actualDelay}ms 后重连`);
         _reconnectTimer = setTimeout(() => {
             connect().catch((err) => {
-                logError(`重连失败，5 秒后重试: ${err}`);
-                scheduleReconnect(5000);
+                logError(`重连失败: ${err}`);
+                scheduleReconnect(0); // 使用指数退避
             });
-        }, delayMs);
+        }, actualDelay);
     }
     async function connect() {
         _intentionalClose = false;
@@ -191,37 +225,44 @@ export function createWsClient(auth) {
         return new Promise((resolve, reject) => {
             try {
                 debug(`[QQ Bot WS] 连接: ${url}`);
-                _ws = new WebSocket(url);
+                const ws = new WebSocket(url);
+                _ws = ws;
                 const timeout = setTimeout(() => {
-                    reject(new Error("WebSocket 连接超时"));
-                }, 15_000);
-                _ws.on("open", () => {
+                    warn("[QQ Bot WS] 连接超时，终止 WebSocket");
+                    ws.terminate(); // 强制关闭，防止半连接状态
+                    if (_connectControl) {
+                        _connectControl = null;
+                        reject(new Error("WebSocket 连接超时"));
+                    }
+                }, DEFAULTS.WS_CONNECT_TIMEOUT_MS);
+                _connectControl = { resolve, reject, timeout };
+                ws.on("open", () => {
                     debug("[QQ Bot WS] TCP 连接已建立");
                 });
-                _ws.on("message", (data) => {
+                ws.on("message", (data) => {
                     try {
                         const payload = JSON.parse(data.toString());
-                        // 首次 Hello 时 resolve 连接 Promise
-                        if (payload.op === OpCode.Hello) {
-                            clearTimeout(timeout);
-                            resolve(undefined);
-                        }
                         handlePayload(payload);
                     }
                     catch (err) {
                         logError(`消息解析失败: ${err}`);
                     }
                 });
-                _ws.on("close", (code, reason) => {
+                ws.on("close", (code, reason) => {
                     _reconnectCount++;
                     debug(`[QQ Bot WS] 连接关闭 (${code}): ${reason?.toString() ?? "unknown"}`);
                     stopHeartbeat();
-                    _ws = null;
+                    // 守卫：只在当前 ws 实例匹配时才清空 _ws，防止错清空新连接
+                    if (_ws === ws) {
+                        _ws = null;
+                    }
+                    // 连接在 READY 之前被关闭 → reject connect()
+                    rejectConnect(new Error(`WebSocket 在鉴权完成前关闭 (${code})`));
                     if (!_intentionalClose) {
-                        scheduleReconnect(1000);
+                        scheduleReconnect(0);
                     }
                 });
-                _ws.on("error", (err) => {
+                ws.on("error", (err) => {
                     logError(`连接错误: ${err.message}`);
                 });
             }
@@ -241,6 +282,8 @@ export function createWsClient(auth) {
             _ws.close(1000, "Intentional close");
             _ws = null;
         }
+        _connectControl = null;
+        _currentReconnectDelay = DEFAULTS.WS_RECONNECT_DELAY_MS;
     }
     return { connect, disconnect, onMessage, onEvent, getSessionId, getDiagnostics };
 }

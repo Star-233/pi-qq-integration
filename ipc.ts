@@ -1,7 +1,7 @@
 import { createServer, connect, type Socket } from "node:net";
 import { existsSync, unlinkSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { InstanceEntry, QBSession } from "./types.js";
+import type { InstanceEntry, QBSession, QqSettings } from "./types.js";
 
 export type IpcEnvelope =
 	| { type: "register"; entry: InstanceEntry }
@@ -9,13 +9,21 @@ export type IpcEnvelope =
 	| { type: "claim"; sessionKey: string }
 	| { type: "outbound"; target: QBSession; content: string; replyTo?: { msgId?: string; eventId?: string } }
 	| { type: "heartbeat" }
-	| { type: "inbound"; session: QBSession; content: string; fromTag: "QQ" | "QQ群" };
+	| { type: "inbound"; session: QBSession; content: string; fromTag: string }
+	// Settings 同步 IPC
+	| { type: "settings_request" }
+	| { type: "settings_update"; settings: QqSettings }
+	| { type: "settings_changed"; settings: QqSettings };
 
 export interface IpcServerOptions {
 	onRegister?: (entry: InstanceEntry) => void;
 	onClaim?: (sessionKey: string, instanceId: string) => void;
 	onOutbound?: (msg: Extract<IpcEnvelope, { type: "outbound" }>, instanceId: string) => void;
 	onDisconnect?: (instanceId: string) => void;
+	/** follower 请求当前 settings（leader 收到后应回复 settings_changed） */
+	onSettingsRequest?: (instanceId: string) => void;
+	/** leader 要求 follower 执行 settings 变更 */
+	onSettingsUpdate?: (settings: QqSettings, instanceId: string) => void;
 }
 
 export function createIpcServer(sockPath: string, handlers: IpcServerOptions) {
@@ -55,6 +63,11 @@ export function createIpcServer(sockPath: string, handlers: IpcServerOptions) {
 						// no-op
 					} else if (env.type === "unregister" && id) {
 						conns.delete(id);
+						handlers.onDisconnect?.(id);
+					} else if (env.type === "settings_request" && id) {
+						handlers.onSettingsRequest?.(id);
+					} else if (env.type === "settings_update" && id) {
+						handlers.onSettingsUpdate?.(env.settings, id);
 					}
 				} catch {
 					// 忽略坏行
@@ -85,10 +98,33 @@ export function createIpcServer(sockPath: string, handlers: IpcServerOptions) {
 				return false;
 			}
 		},
+		/** 向所有已连接的 follower 广播消息 */
+		broadcast(env: IpcEnvelope): void {
+			const data = JSON.stringify(env) + "\n";
+			for (const sock of conns.values()) {
+				try {
+					sock.write(data);
+				} catch {
+					// 忽略单个写失败
+				}
+			}
+		},
 		has(instanceId: string): boolean {
 			return conns.has(instanceId);
 		},
+		followerIds(): string[] {
+			return [...conns.keys()];
+		},
 		close() {
+			// 主动断开所有已有连接
+			for (const sock of conns.values()) {
+				try {
+					sock.destroy();
+				} catch {
+					// 忽略
+				}
+			}
+			conns.clear();
 			try {
 				server.close();
 			} catch {
@@ -105,6 +141,8 @@ export function createIpcServer(sockPath: string, handlers: IpcServerOptions) {
 
 export interface IpcClientOptions {
 	onInbound?: (msg: Extract<IpcEnvelope, { type: "inbound" }>) => void;
+	/** leader 广播的 settings 变更 */
+	onSettingsChanged?: (settings: QqSettings) => void;
 	onConnect?: () => void;
 	onClose?: () => void;
 }
@@ -130,6 +168,7 @@ export function createIpcClient(sockPath: string, handlers: IpcClientOptions) {
 			try {
 				const env = JSON.parse(line) as IpcEnvelope;
 				if (env.type === "inbound") handlers.onInbound?.(env);
+				else if (env.type === "settings_changed") handlers.onSettingsChanged?.(env.settings);
 			} catch {
 				// 忽略坏行
 			}
@@ -141,7 +180,6 @@ export function createIpcClient(sockPath: string, handlers: IpcClientOptions) {
 	});
 	client.on("error", () => {
 		connected = false;
-		// 连接失败/异常：触发 onClose 让 follower 走重试逻辑，避免静默卡死
 		handlers.onClose?.();
 	});
 

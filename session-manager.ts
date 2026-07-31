@@ -1,10 +1,12 @@
 import { readdirSync, statSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { userInfo } from "node:os";
 import type { PiSessionInfo } from "./types.js";
 import { error as logError } from "./logger.js";
+import { PATHS, DEFAULTS } from "./constants.js";
 
-const SESSIONS_DIR = join(homedir(), ".pi", "agent", "sessions");
+const SESSIONS_DIR = PATHS.SESSIONS;
+const _homeUser = userInfo().username;
 
 /**
  * Pi Session 管理器。
@@ -24,7 +26,7 @@ function shortProjectName(raw: string): string {
   const parts = path.split("/");
   // 取最后一段，跳过 home/用户名 这类常见前缀
   let last = parts[parts.length - 1];
-  if (last === "nullsky" || last.startsWith(".") || last === "home") {
+  if (last === _homeUser || last.startsWith(".") || last === "home") {
     // 如果最后一段无意义，取前一段
     last = parts[parts.length - 2] ?? last;
   }
@@ -147,7 +149,7 @@ export function createSessionManager() {
       return recent
         .map((e) => {
           const label = e.role === "user" ? "👤" : "🤖";
-          const text = e.text.slice(0, 300);
+          const text = e.text.slice(0, DEFAULTS.MSG_PREVIEW_LEN);
           return `${label} ${text}`;
         })
         .join("\n\n");
@@ -164,7 +166,7 @@ export function createSessionManager() {
     if (sessions.length === 0) return "暂无 session";
 
     return sessions
-      .slice(0, 20)
+      .slice(0, DEFAULTS.SESSION_LIST_LIMIT)
       .map((s, i) => {
         const ago = relativeTime(s.modifiedAt);
         const sizeKB = (s.size / 1024).toFixed(1);

@@ -1,10 +1,10 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname } from "node:path";
-const LOG_FILE = `${homedir()}/.pi/agent/qq-integration.log`;
-const MAX_SIZE = 5 * 1024 * 1024; // 5MB，超过则循环覆盖（清空重写并写标记）
+import { PATHS, DEFAULTS } from "./constants.js";
+const LOG_FILE = PATHS.LOG;
+const MAX_SIZE = DEFAULTS.LOG_MAX_SIZE;
 let _logBuffer = [];
-const MAX_BUFFER = 200; // 内存保留最近 200 条，供 /qq-logs 查看
+const MAX_BUFFER = DEFAULTS.LOG_MAX_BUFFER;
 function ensureLogDir() {
     const dir = dirname(LOG_FILE);
     if (!existsSync(dir)) {

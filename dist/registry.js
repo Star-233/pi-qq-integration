@@ -1,14 +1,19 @@
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { homedir } from "node:os";
-const REGISTRY_PATH = `${homedir()}/.pi/agent/qq-integration/registry.json`;
+import { readFileSync, writeFileSync, renameSync, existsSync } from "node:fs";
+import { PATHS } from "./constants.js";
+const REGISTRY_PATH = PATHS.REGISTRY;
 function pidAlive(pid) {
     try {
-        // kill(pid, 0) 仅检查进程是否存在，不发送信号
         return process.kill(pid, 0);
     }
     catch {
         return false;
     }
+}
+/** 原子写入：先写临时文件再 rename，避免 truncate 窗口 */
+function atomicWrite(filePath, data) {
+    const tmp = `${filePath}.tmp`;
+    writeFileSync(tmp, data, "utf-8");
+    renameSync(tmp, filePath); // rename 在同一文件系统上是原子的
 }
 export function readRegistry() {
     try {
@@ -28,7 +33,7 @@ export function readRegistry() {
 }
 export function writeRegistry(reg) {
     try {
-        writeFileSync(REGISTRY_PATH, JSON.stringify(reg, null, 2), "utf-8");
+        atomicWrite(REGISTRY_PATH, JSON.stringify(reg, null, 2));
     }
     catch {
         // 忽略写入失败

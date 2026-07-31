@@ -1,8 +1,15 @@
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { homedir, hostname } from "node:os";
+import { readFileSync, writeFileSync, renameSync, existsSync } from "node:fs";
+import { hostname } from "node:os";
 import { DEFAULT_QQ_SETTINGS } from "./types.js";
-const DEFAULT_CONFIG_PATH = `${homedir()}/.pi/agent/qq-integration-config.json`;
+import { PATHS } from "./constants.js";
+const DEFAULT_CONFIG_PATH = PATHS.CONFIG;
 let _config = null;
+/** 原子写入：先写临时文件再 rename */
+function atomicWrite(filePath, data) {
+    const tmp = `${filePath}.tmp`;
+    writeFileSync(tmp, data, "utf-8");
+    renameSync(tmp, filePath);
+}
 export function loadConfig(configPath) {
     if (_config)
         return _config;
@@ -59,21 +66,36 @@ export function loadSettings() {
     }
     return { ...DEFAULT_QQ_SETTINGS };
 }
-/** 将转发设置保存到配置文件 */
+/**
+ * 将转发设置保存到配置文件。
+ * 使用原子写入（tmp + rename）避免 truncate 窗口导致配置文件损毁。
+ * read-modify-write 仍非跨进程原子，但原子写入消除了读到空文件后覆写的灾难性风险。
+ */
 export function saveSettings(settings) {
     const path = DEFAULT_CONFIG_PATH;
     let config = {};
     try {
         if (existsSync(path)) {
             const raw = readFileSync(path, "utf-8");
-            config = JSON.parse(raw);
+            const parsed = JSON.parse(raw);
+            if (parsed && typeof parsed === "object") {
+                config = parsed;
+            }
         }
     }
     catch {
-        // 忽略
+        // JSON.parse 失败（文件可能被其他进程正在写入）：
+        // 不覆盖！保留空 config 会导致 appId/appSecret 丢失。
+        // 放弃本次写入以保护配置文件完整性。
+        return;
     }
     config.settings = settings;
-    writeFileSync(path, JSON.stringify(config, null, 2), "utf-8");
+    try {
+        atomicWrite(path, JSON.stringify(config, null, 2));
+    }
+    catch {
+        // 忽略写入失败
+    }
 }
 export function clearConfigCache() {
     _config = null;

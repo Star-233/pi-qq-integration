@@ -36,14 +36,14 @@ import {
 	getLogPath,
 	clearLog,
 } from "./logger.js";
-import { homedir } from "node:os";
 import { createRequire } from "node:module";
+import { PATHS, DEFAULTS, sessionTag } from "./constants.js";
 
 const require = createRequire(import.meta.url);
 const packageJson = require("../package.json");
 
-const LOCK_PATH = `${homedir()}/.pi/agent/qq-integration.lock`;
-const HEARTBEAT_INTERVAL_MS = 30_000;
+const LOCK_PATH = PATHS.LOCK;
+const HEARTBEAT_INTERVAL_MS = DEFAULTS.HEARTBEAT_INTERVAL_MS;
 const EXTENSION_VERSION = packageJson.version;
 
 function stateLabel(state: string): string {
@@ -196,12 +196,14 @@ export default function (pi: ExtensionAPI) {
 	let _registryTimer: ReturnType<typeof setInterval> | null = null;
 	let _followerStop = false;
 	let _followerRetryTimer: ReturnType<typeof setTimeout> | null = null;
+	/** follower 重连延迟（指数退避） */
+	let _followerRetryDelay: number = DEFAULTS.FOLLOWER_RETRY_MS;
 
 	// ── 连接/断开 ──
 
 		// ── 连接/断开（多实例：leader 持 QQ 连接，follower 经 IPC 委派）──
 
-	const LEADER_SOCK_PATH = `${homedir()}/.pi/agent/qq-integration/instances/${process.pid}.sock`;
+	const LEADER_SOCK_PATH = `${PATHS.INSTANCE_SOCK_DIR}/${process.pid}.sock`;
 
 	async function connect(ctx: ExtensionContext): Promise<void> {
 		if (_role) {
@@ -241,6 +243,11 @@ export default function (pi: ExtensionAPI) {
 		ctx.ui.notify("QQ Bot: 正在连接（leader）...", "info");
 		try {
 			_auth = createAuthManager(config.appId, config.appSecret);
+			_auth.onFatalError((err) => {
+				logError(`Auth 致命错误: ${err.message}`);
+				ctx.ui.notify(`QQ Bot: Token 刷新连续失败，连接已不可用 ❌`, "error");
+				teardown();
+			});
 			await _auth.getToken();
 			_auth.startRefresh();
 
@@ -272,11 +279,19 @@ export default function (pi: ExtensionAPI) {
 					_settings = { ..._settings, ...update };
 					saveSettings(_settings);
 					info(`设置已更新: ${JSON.stringify(update)}`);
+					// 广播给所有 follower，保持内存状态一致
+					_ipcServer?.broadcast({ type: "settings_changed", settings: _settings });
 				},
 				claimSession: (s: QBSession) => claimSession(s),
 			});
 
-			_ws = createWsClient(_auth);
+			_ws = createWsClient(_auth, {
+				onAuthFailed: () => {
+					logError(`QQ Bot 鉴权失败 (InvalidSession)`);
+					ctx.ui.notify("QQ Bot: 鉴权失败，请检查 appId/appSecret ❌", "error");
+					teardown();
+				},
+			});
 			_ws.onMessage((qqMsg) => {
 				const claimer = findClaimer(`${qqMsg.session.type}:${qqMsg.session.id}`);
 				if (claimer && claimer.id !== _instanceId && _ipcServer?.has(claimer.id)) {
@@ -284,7 +299,7 @@ export default function (pi: ExtensionAPI) {
 						type: "inbound",
 						session: qqMsg.session,
 						content: qqMsg.content,
-						fromTag: qqMsg.session.type === "c2c" ? "QQ" : "QQ群",
+						fromTag: sessionTag(qqMsg.session.type),
 					});
 					if (ok) {
 						debug(`QQ 入站转发给 follower ${claimer.id}`);
@@ -306,14 +321,27 @@ export default function (pi: ExtensionAPI) {
 						_api.sendMarkdown(msg.target, msg.content, msg.replyTo).catch((e) => logError(`leader 转发失败: ${e}`));
 					}
 				},
-				// follower 仅连接断开：保留 registry 中的认领，待其重连后由 upsertInstance 恢复；
-				// 若 follower 进程真的退出，pruneDead 会按 pid 清理该实例。
 				onDisconnect: (instanceId) => {
 					debug(`follower ${instanceId} 连接断开（保留认领，待重连恢复）`);
+				},
+				// follower 请求当前 settings（新 follower 连接后同步状态）
+				onSettingsRequest: (instanceId) => {
+					_ipcServer?.sendTo(instanceId, { type: "settings_changed", settings: _settings });
+				},
+				// follower 发起 settings 变更请求（#settings 命令路由到 leader）
+				onSettingsUpdate: (settings, instanceId) => {
+					_settings = settings;
+					saveSettings(_settings);
+					info(`follower ${instanceId} 触发 settings 同步: ${JSON.stringify(settings)}`);
+					// 广播给所有 follower
+					_ipcServer?.broadcast({ type: "settings_changed", settings: _settings });
 				},
 			});
 			setLeader(_instanceId, LEADER_SOCK_PATH);
 			upsertInstance(selfEntry("leader"));
+			// 立即执行一次 pruneDead，清理上次残留的死实例
+			pruneDead();
+			touchInstance(_instanceId);
 			_registryTimer = setInterval(() => {
 				pruneDead();
 				touchInstance(_instanceId);
@@ -362,9 +390,17 @@ export default function (pi: ExtensionAPI) {
 			clearSession: () => {},
 			getSettings: () => _settings,
 			updateSettings: (update: Partial<QqSettings>) => {
-				_settings = { ..._settings, ...update };
-				saveSettings(_settings);
-				info(`设置已更新: ${JSON.stringify(update)}`);
+				// follower 不直接修改，而是通过 IPC 请求 leader 执行变更后广播
+				const merged = { ..._settings, ...update };
+				if (_ipcClient) {
+					_ipcClient.send({ type: "settings_update", settings: merged });
+					info(`settings 变更已发送给 leader 处理: ${JSON.stringify(update)}`);
+				} else {
+					// IPC 未连接时回退到本地修改
+					_settings = merged;
+					saveSettings(_settings);
+					info(`设置已更新（本地）: ${JSON.stringify(update)}`);
+				}
 			},
 			claimSession: (s: QBSession) => claimSession(s),
 		});
@@ -386,11 +422,18 @@ export default function (pi: ExtensionAPI) {
 		const client = createIpcClient(sock, {
 			onConnect: () => {
 				client.send({ type: "register", entry: selfEntry("follower") });
+				// 同步 leader 的 settings 状态
+				client.send({ type: "settings_request" });
 				info(`已连接 leader（follower）`);
 				ctx.ui.notify("QQ Bot: 已连接 leader ✅（follower）", "info");
+				_followerRetryDelay = DEFAULTS.FOLLOWER_RETRY_MS; // 重置退避
 			},
 			onInbound: (msg) => {
 				handleInboundQqMessage({ session: msg.session, content: msg.content });
+			},
+			onSettingsChanged: (settings) => {
+				_settings = settings;
+				info(`settings 已从 leader 同步: ${JSON.stringify(settings)}`);
 			},
 			onClose: () => {
 				if (_followerStop) return;
@@ -403,11 +446,14 @@ export default function (pi: ExtensionAPI) {
 
 	function scheduleRetryFollower(ctx: ExtensionContext): void {
 		if (_followerStop || _followerRetryTimer) return;
+		const delay = _followerRetryDelay;
+		_followerRetryDelay = Math.min(delay * 2, 30_000); // 上限 30 秒
+		debug(`follower 将在 ${delay}ms 后重试`);
 		_followerRetryTimer = setTimeout(() => {
 			_followerRetryTimer = null;
 			if (_followerStop) return;
 			tryFollower(ctx);
-		}, 2000);
+		}, delay);
 	}
 
 	async function sendToQq(
@@ -461,22 +507,22 @@ export default function (pi: ExtensionAPI) {
 			saveSettings(_settings);
 		}
 		claimSession(qqMsg.session);
-		debug(`收到 QQ 消息: [${qqMsg.session.type}] ${qqMsg.content.slice(0, 100)}`);
+		debug(`收到 QQ 消息: [${qqMsg.session.type}] ${qqMsg.content.slice(0, DEFAULTS.CONTENT_PREVIEW_LEN)}`);
 
 		const handled = _cmdHandler?.tryHandle(qqMsg.content, qqMsg.session);
 		if (handled) {
 			handled.then((isCmd) => {
 				if (!isCmd) {
-					const fromTag = qqMsg.session.type === "c2c" ? "QQ" : "QQ群";
+					const fromTag = sessionTag(qqMsg.session.type);
 					pi.sendUserMessage(`[${fromTag}] ${qqMsg.content}`);
-					info(`转发到 pi: [${fromTag}] ${qqMsg.content.slice(0, 100)}`);
+					info(`转发到 pi: [${fromTag}] ${qqMsg.content.slice(0, DEFAULTS.CONTENT_PREVIEW_LEN)}`);
 				} else {
 					debug(`QQ 命令已处理: ${qqMsg.content}`);
 				}
 			}).catch((e) => logError(`QQ 命令处理失败: ${e}`));
 		} else {
 			// 无命令处理器兜底：当作普通消息转发给 pi
-			const fromTag = qqMsg.session.type === "c2c" ? "QQ" : "QQ群";
+			const fromTag = sessionTag(qqMsg.session.type);
 			pi.sendUserMessage(`[${fromTag}] ${qqMsg.content}`);
 		}
 	}
@@ -516,8 +562,9 @@ async function disconnect(ctx: ExtensionContext): Promise<void> {
 		}
 		if (_role === "leader") {
 			clearLeader();
-			removeInstance(_instanceId);
 		}
+		// 无论角色都清理自己的 registry 条目
+		removeInstance(_instanceId);
 		_role = null;
 		if (lock.getDiagnostics().isOwner) await lock.release();
 	}
@@ -573,7 +620,10 @@ async function disconnect(ctx: ExtensionContext): Promise<void> {
 
 			if (authDiag) {
 				const ok = authDiag.hasToken && (authDiag.expiresInMs ?? 0) > 0;
-				lines.push(`${ok ? "✅" : "❌"} **Token**: ${ok ? "有效" : "无效"}`);
+				const failInfo = authDiag.consecutiveRefreshFailures > 0
+					? ` (刷新失败 ${authDiag.consecutiveRefreshFailures} 次)`
+					: "";
+				lines.push(`${ok ? "✅" : "❌"} **Token**: ${ok ? "有效" : "无效"}${failInfo}`);
 			} else {
 				lines.push("⚪ **Token**: 未初始化");
 			}
@@ -626,6 +676,11 @@ async function disconnect(ctx: ExtensionContext): Promise<void> {
 				lines.push(
 					`- 上次刷新: ${authDiag.lastRefreshTime ? new Date(authDiag.lastRefreshTime).toLocaleString("zh-CN") : "(未刷新)"}`,
 				);
+				if (authDiag.consecutiveRefreshFailures > 0) {
+					lines.push(
+						`- ⚠️ 连续刷新失败: ${authDiag.consecutiveRefreshFailures} 次`,
+					);
+				}
 			} else {
 				lines.push("- 未初始化");
 			}
@@ -766,13 +821,13 @@ async function disconnect(ctx: ExtensionContext): Promise<void> {
 		const replyTo = target.msgId || target.eventId
 			? { msgId: target.msgId, eventId: target.eventId }
 			: undefined;
-		info(`桌面端消息准备转发: target=${target.type}/${target.id}, replyTo=${JSON.stringify(replyTo)}, content=${content.slice(0, 100)}`);
+		info(`桌面端消息准备转发: target=${target.type}/${target.id}, replyTo=${JSON.stringify(replyTo)}, content=${content.slice(0, DEFAULTS.CONTENT_PREVIEW_LEN)}`);
 		if (!replyTo) {
 			warn(`桌面消息将以主动消息发送；若未收到，请检查 Bot 主动消息权限，或在 QQ 里发送 #target 刷新被动回复凭据`);
 		}
 		try {
 			await sendToQq(target, `**🖥 桌面端:** ${content}`, replyTo);
-			info(`桌面消息已转发到 QQ: ${content.slice(0, 100)}`);
+			info(`桌面消息已转发到 QQ: ${content.slice(0, DEFAULTS.CONTENT_PREVIEW_LEN)}`);
 		} catch (err) {
 			logError(`桌面消息转发失败: ${err}`);
 		}
@@ -797,14 +852,14 @@ async function disconnect(ctx: ExtensionContext): Promise<void> {
 		const content = extractTextFromContent(event.message.content);
 		if (!content.trim()) return;
 
-		debug(`pi 回复: ${content.slice(0, 100)}`);
+		debug(`pi 回复: ${content.slice(0, DEFAULTS.CONTENT_PREVIEW_LEN)}`);
 
 		const replyTo = target.msgId || target.eventId
 			? { msgId: target.msgId, eventId: target.eventId }
 			: undefined;
 		try {
 			await sendToQq(target, content, replyTo);
-			info(`已发回 QQ [${target.type}]: ${content.slice(0, 100)}`);
+			info(`已发回 QQ [${target.type}]: ${content.slice(0, DEFAULTS.CONTENT_PREVIEW_LEN)}`);
 		} catch (err) {
 			logError(`回复发送失败: ${err}`);
 		}
@@ -838,14 +893,14 @@ async function disconnect(ctx: ExtensionContext): Promise<void> {
 			return;
 		}
 
-		debug(`agent_settled 转发: ${content.slice(0, 100)}`);
+		debug(`agent_settled 转发: ${content.slice(0, DEFAULTS.CONTENT_PREVIEW_LEN)}`);
 
 		const replyTo = target.msgId || target.eventId
 			? { msgId: target.msgId, eventId: target.eventId }
 			: undefined;
 		try {
 			await sendToQq(target, content, replyTo);
-			info(`已发回 QQ (最后一条) [${target.type}]: ${content.slice(0, 100)}`);
+			info(`已发回 QQ (最后一条) [${target.type}]: ${content.slice(0, DEFAULTS.CONTENT_PREVIEW_LEN)}`);
 		} catch (err) {
 			logError(`agent_settled 转发失败: ${err}`);
 		}

@@ -1,5 +1,6 @@
 import { debug } from "./logger.js";
-const API_BASE = "https://api.sgroup.qq.com";
+import { ENDPOINTS } from "./constants.js";
+const API_BASE = ENDPOINTS.API_BASE;
 /**
  * QQ Bot REST API 客户端。
  * 负责发送消息到 QQ。

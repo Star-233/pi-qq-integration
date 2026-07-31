@@ -208,6 +208,7 @@ export interface AuthManager {
   startRefresh(): void;
   stopRefresh(): void;
   getDiagnostics(): AuthDiagnostics;
+  onFatalError(handler: (err: Error) => void): void;
 }
 
 export interface AuthDiagnostics {
@@ -215,4 +216,5 @@ export interface AuthDiagnostics {
   expiresAt: number | null;
   expiresInMs: number | null;
   lastRefreshTime: number | null;
+  consecutiveRefreshFailures: number;
 }

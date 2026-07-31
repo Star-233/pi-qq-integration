@@ -1,7 +1,8 @@
 import type { AuthManager, SendMessageRequest, SendMessageResponse, QBSession, QBSessionType } from "./types.js";
 import { debug } from "./logger.js";
+import { ENDPOINTS } from "./constants.js";
 
-const API_BASE = "https://api.sgroup.qq.com";
+const API_BASE = ENDPOINTS.API_BASE;
 
 export interface CreateApiClientOptions {
   initialMsgSeqMap?: Map<string, number>;

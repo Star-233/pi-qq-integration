@@ -43,6 +43,13 @@ export function createIpcServer(sockPath, handlers) {
                     }
                     else if (env.type === "unregister" && id) {
                         conns.delete(id);
+                        handlers.onDisconnect?.(id);
+                    }
+                    else if (env.type === "settings_request" && id) {
+                        handlers.onSettingsRequest?.(id);
+                    }
+                    else if (env.type === "settings_update" && id) {
+                        handlers.onSettingsUpdate?.(env.settings, id);
                     }
                 }
                 catch {
@@ -74,10 +81,35 @@ export function createIpcServer(sockPath, handlers) {
                 return false;
             }
         },
+        /** 向所有已连接的 follower 广播消息 */
+        broadcast(env) {
+            const data = JSON.stringify(env) + "\n";
+            for (const sock of conns.values()) {
+                try {
+                    sock.write(data);
+                }
+                catch {
+                    // 忽略单个写失败
+                }
+            }
+        },
         has(instanceId) {
             return conns.has(instanceId);
         },
+        followerIds() {
+            return [...conns.keys()];
+        },
         close() {
+            // 主动断开所有已有连接
+            for (const sock of conns.values()) {
+                try {
+                    sock.destroy();
+                }
+                catch {
+                    // 忽略
+                }
+            }
+            conns.clear();
             try {
                 server.close();
             }
@@ -116,6 +148,8 @@ export function createIpcClient(sockPath, handlers) {
                 const env = JSON.parse(line);
                 if (env.type === "inbound")
                     handlers.onInbound?.(env);
+                else if (env.type === "settings_changed")
+                    handlers.onSettingsChanged?.(env.settings);
             }
             catch {
                 // 忽略坏行
@@ -128,7 +162,6 @@ export function createIpcClient(sockPath, handlers) {
     });
     client.on("error", () => {
         connected = false;
-        // 连接失败/异常：触发 onClose 让 follower 走重试逻辑，避免静默卡死
         handlers.onClose?.();
     });
     return {

@@ -1,4 +1,5 @@
 import { debug, info } from "./logger.js";
+import { DEFAULTS } from "./constants.js";
 /**
  * QQ 消息中的命令处理器。
  * 解析 #cmd args 格式的命令并执行。
@@ -109,7 +110,7 @@ export function createCommandHandler(api, sessionManager, callbacks) {
     }
     async function cmdHistory(session, arg) {
         // 从当前 session 名读取
-        const n = parseInt(arg, 10) || 5;
+        const n = parseInt(arg, 10) || DEFAULTS.HISTORY_DEFAULT;
         // 获取当前 session 的信息 - 通过扫描找到最新的 session
         const sessions = sessionManager.listSessions();
         if (sessions.length === 0) {
