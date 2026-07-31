@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.4
+
+- 安全加固：新增 QQ 消息白名单（`allowedUsers`/`allowedGroups`）防远程提示词注入
+- 安全加固：配置/日志/registry/lock 文件权限收紧为 0600/0700
+- 安全加固：IPC 消息大小限制（防 OOM）、session.id 校验（防路径穿越）、auth 错误响应体截断
+- 修复：API 401 时真正强制刷新 token（此前未绕过本地缓存）
+- 修复：IPC settings_update 增加 schema 校验与互斥归一
+- 文档：README 中英文拆分为独立文件（README.md + README.zh-CN.md），新增贡献者展示
+- 文档：修正 12 处文档与代码不一致（#settings 示例、日志截断说明、REST 端点、/qq-target 用法等）
+
+## 0.4.3
+
+- 更新 npm 包描述为中英双语。
+
 ## 0.4.2
 
 - README: 重写为中英双版，英文在前默认。
