@@ -1,6 +1,13 @@
 import { debug } from "./logger.js";
 import { ENDPOINTS } from "./constants.js";
 const API_BASE = ENDPOINTS.API_BASE;
+/** session.id 仅允许安全字符，防止路径穿越 / API 路径注入 */
+const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+function assertValidSessionId(id) {
+    if (!SESSION_ID_RE.test(id)) {
+        throw new Error(`非法 session id: ${JSON.stringify(id).slice(0, 50)}`);
+    }
+}
 /**
  * QQ Bot REST API 客户端。
  * 负责发送消息到 QQ。
@@ -25,8 +32,8 @@ export function createApiClient(auth, options) {
             body: body ? JSON.stringify(body) : undefined,
         });
         if (resp.status === 401) {
-            // Token 可能过期，强制刷新后重试一次
-            const newToken = await auth.getToken();
+            // Token 可能过期，强制刷新后重试一次（forceRefresh 忽略本地缓存）
+            const newToken = await auth.forceRefresh();
             const retryResp = await fetch(`${API_BASE}${path}`, {
                 method,
                 headers: {
@@ -71,6 +78,7 @@ export function createApiClient(auth, options) {
         if (options?.eventId)
             body.event_id = options.eventId;
         let path;
+        assertValidSessionId(session.id);
         switch (session.type) {
             case "c2c":
                 path = `/v2/users/${session.id}/messages`;
@@ -112,6 +120,7 @@ export function createApiClient(auth, options) {
         if (replyTo?.eventId)
             body.event_id = replyTo.eventId;
         let path;
+        assertValidSessionId(session.id);
         switch (session.type) {
             case "c2c":
                 path = `/v2/users/${session.id}/messages`;

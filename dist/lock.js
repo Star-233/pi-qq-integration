@@ -1,4 +1,4 @@
-import { writeFileSync, readFileSync, unlinkSync, existsSync, openSync, closeSync } from "node:fs";
+import { writeFileSync, readFileSync, unlinkSync, existsSync, openSync, closeSync, chmodSync } from "node:fs";
 import { PATHS } from "./constants.js";
 const DEFAULT_LOCK_PATH = PATHS.LOCK;
 /**
@@ -39,7 +39,7 @@ export function createLockManager(lockPath) {
             startedAt: Date.now(),
             heartbeatAt: Date.now(),
         };
-        writeFileSync(path, JSON.stringify(data, null, 2), "utf-8");
+        writeFileSync(path, JSON.stringify(data, null, 2), { encoding: "utf-8", mode: 0o600 });
     }
     /** 使用 O_EXCL 原子创建锁文件 — 如果文件已存在则抛出 EEXIST */
     function tryExclusiveLock() {
@@ -49,9 +49,15 @@ export function createLockManager(lockPath) {
             heartbeatAt: Date.now(),
         };
         try {
-            const fd = openSync(path, "wx"); // O_WRONLY | O_CREAT | O_EXCL
+            const fd = openSync(path, "wx", 0o600); // O_WRONLY | O_CREAT | O_EXCL
             writeFileSync(fd, JSON.stringify(data, null, 2), "utf-8");
             closeSync(fd);
+            try {
+                chmodSync(path, 0o600);
+            }
+            catch {
+                // 忽略
+            }
             return true;
         }
         catch (err) {

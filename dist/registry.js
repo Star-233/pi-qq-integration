@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, renameSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync, existsSync, chmodSync } from "node:fs";
 import { PATHS } from "./constants.js";
 const REGISTRY_PATH = PATHS.REGISTRY;
 function pidAlive(pid) {
@@ -9,11 +9,17 @@ function pidAlive(pid) {
         return false;
     }
 }
-/** 原子写入：先写临时文件再 rename，避免 truncate 窗口 */
+/** 原子写入：先写临时文件再 rename，避免 truncate 窗口。0600 权限，含 PID/socket 路径等敏感信息 */
 function atomicWrite(filePath, data) {
     const tmp = `${filePath}.tmp`;
-    writeFileSync(tmp, data, "utf-8");
-    renameSync(tmp, filePath); // rename 在同一文件系统上是原子的
+    writeFileSync(tmp, data, { encoding: "utf-8", mode: 0o600 });
+    renameSync(tmp, filePath);
+    try {
+        chmodSync(filePath, 0o600);
+    }
+    catch {
+        // 忽略
+    }
 }
 export function readRegistry() {
     try {

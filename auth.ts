@@ -37,7 +37,7 @@ export function createAuthManager(
 		});
 
 		if (!resp.ok) {
-			const text = await resp.text();
+			const text = (await resp.text()).slice(0, 200);
 			throw new Error(`获取 Access Token 失败 (${resp.status}): ${text}`);
 		}
 
@@ -53,6 +53,11 @@ export function createAuthManager(
 		if (_token && Date.now() < _expiresAt) {
 			return _token;
 		}
+		return await fetchToken();
+	}
+
+	/** 强制刷新 token（忽略本地缓存），用于 API 返回 401 后重试 */
+	async function forceRefresh(): Promise<string> {
 		return await fetchToken();
 	}
 
@@ -110,5 +115,5 @@ export function createAuthManager(
 		};
 	}
 
-	return { getToken, startRefresh, stopRefresh, getDiagnostics, onFatalError };
+	return { getToken, forceRefresh, startRefresh, stopRefresh, getDiagnostics, onFatalError };
 }

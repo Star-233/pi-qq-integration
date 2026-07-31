@@ -9,6 +9,10 @@ export interface QQBotConfig {
     role?: "auto" | "leader" | "follower";
     /** 是否在 pi 启动时自动连接 QQ Bot，默认 true（设 false 需手动 /qq-connect） */
     autoConnect?: boolean;
+    /** QQ 消息白名单：c2c 用户 openid。配置后仅处理白名单内的私聊消息；未配置则放行全部（日志告警） */
+    allowedUsers?: string[];
+    /** QQ 消息白名单：群 openid。配置后仅处理白名单内的群消息；未配置则放行全部 */
+    allowedGroups?: string[];
 }
 export type QBRole = "leader" | "follower";
 export interface InstanceEntry {
@@ -164,6 +168,8 @@ export interface AccessTokenResult {
 }
 export interface AuthManager {
     getToken(): Promise<string>;
+    /** 强制刷新 token（忽略本地缓存），用于 API 返回 401 后重试 */
+    forceRefresh(): Promise<string>;
     startRefresh(): void;
     stopRefresh(): void;
     getDiagnostics(): AuthDiagnostics;

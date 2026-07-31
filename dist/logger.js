@@ -1,14 +1,36 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync, chmodSync } from "node:fs";
 import { dirname } from "node:path";
 import { PATHS, DEFAULTS } from "./constants.js";
 const LOG_FILE = PATHS.LOG;
 const MAX_SIZE = DEFAULTS.LOG_MAX_SIZE;
 let _logBuffer = [];
 const MAX_BUFFER = DEFAULTS.LOG_MAX_BUFFER;
+let _permsEnsured = false;
+/** 确保日志目录与文件权限收紧（目录 0700、文件 0600），避免对话片段泄露给同机其他用户 */
+function ensurePerms() {
+    if (_permsEnsured)
+        return;
+    _permsEnsured = true;
+    try {
+        const dir = dirname(LOG_FILE);
+        if (!existsSync(dir)) {
+            mkdirSync(dir, { recursive: true, mode: 0o700 });
+        }
+        else {
+            chmodSync(dir, 0o700);
+        }
+        if (existsSync(LOG_FILE)) {
+            chmodSync(LOG_FILE, 0o600);
+        }
+    }
+    catch {
+        // 忽略
+    }
+}
 function ensureLogDir() {
     const dir = dirname(LOG_FILE);
     if (!existsSync(dir)) {
-        mkdirSync(dir, { recursive: true });
+        mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
 }
 function rotateIfNeeded() {
@@ -16,7 +38,7 @@ function rotateIfNeeded() {
         if (existsSync(LOG_FILE) && statSync(LOG_FILE).size > MAX_SIZE) {
             const marker = `[${timestamp()}] [INFO] 日志已达 ${Math.round(MAX_SIZE / 1024 / 1024)}MB，` +
                 `已循环覆盖（旧日志已丢弃）\n`;
-            writeFileSync(LOG_FILE, marker, "utf-8"); // 截断清空并以标记作为新文件首行
+            writeFileSync(LOG_FILE, marker, { encoding: "utf-8", mode: 0o600 }); // 截断清空并以标记作为新文件首行
         }
     }
     catch {
@@ -30,9 +52,16 @@ export function log(level, message) {
     const line = `[${timestamp()}] [${level}] ${message}`;
     // 写入文件
     try {
+        ensurePerms();
         ensureLogDir();
         rotateIfNeeded();
-        appendFileSync(LOG_FILE, line + "\n", "utf-8");
+        // 首次创建日志文件时以 0600 创建；已存在则保持原权限
+        if (!existsSync(LOG_FILE)) {
+            writeFileSync(LOG_FILE, line + "\n", { encoding: "utf-8", mode: 0o600 });
+        }
+        else {
+            appendFileSync(LOG_FILE, line + "\n", "utf-8");
+        }
     }
     catch {
         // 写入文件失败时静默忽略
@@ -94,7 +123,7 @@ export function getLogPath() {
 export function clearLog() {
     _logBuffer = [];
     try {
-        writeFileSync(LOG_FILE, "", "utf-8"); // 真正清空文件（append 空串无法截断原有内容）
+        writeFileSync(LOG_FILE, "", { encoding: "utf-8", mode: 0o600 }); // 真正清空文件（append 空串无法截断原有内容）
     }
     catch {
         // 忽略

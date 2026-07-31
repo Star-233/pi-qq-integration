@@ -1,18 +1,24 @@
-import { readFileSync, writeFileSync, renameSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync, existsSync, chmodSync } from "node:fs";
 import { hostname } from "node:os";
 import type { QQBotConfig, QqSettings } from "./types.js";
 import { DEFAULT_QQ_SETTINGS } from "./types.js";
 import { PATHS } from "./constants.js";
+import { warn } from "./logger.js";
 
 const DEFAULT_CONFIG_PATH = PATHS.CONFIG;
 
 let _config: QQBotConfig | null = null;
 
-/** 原子写入：先写临时文件再 rename */
+/** 原子写入：先写临时文件再 rename。临时文件与目标都以 0600 创建，避免 appSecret 泄露给同机其他用户 */
 function atomicWrite(filePath: string, data: string): void {
 	const tmp = `${filePath}.tmp`;
-	writeFileSync(tmp, data, "utf-8");
+	writeFileSync(tmp, data, { encoding: "utf-8", mode: 0o600 });
 	renameSync(tmp, filePath);
+	try {
+		chmodSync(filePath, 0o600);
+	} catch {
+		// 忽略
+	}
 }
 
 export function loadConfig(configPath?: string): QQBotConfig {
@@ -36,6 +42,13 @@ export function loadConfig(configPath?: string): QQBotConfig {
 	}
 
 	_config = parsed as QQBotConfig;
+
+	// 收紧配置文件权限：含 appSecret，必须 0600
+	try {
+		chmodSync(path, 0o600);
+	} catch {
+		// 忽略
+	}
 	return _config;
 }
 
@@ -65,7 +78,7 @@ export function loadSettings(): QqSettings {
 		const raw = readFileSync(path, "utf-8");
 		const parsed = JSON.parse(raw) as Partial<QQBotConfig>;
 		if (parsed.settings) {
-			return {
+			const settings: QqSettings = {
 				forwardDesktopMessages:
 					parsed.settings.forwardDesktopMessages ?? DEFAULT_QQ_SETTINGS.forwardDesktopMessages,
 				forwardToolCalls:
@@ -75,6 +88,13 @@ export function loadSettings(): QqSettings {
 				defaultSession:
 					parsed.settings.defaultSession ?? DEFAULT_QQ_SETTINGS.defaultSession,
 			};
+			// forwardToolCalls 与 lastMessageOnly 互斥：同时为 true 时以 forwardToolCalls 为准，
+			// 关闭 lastMessageOnly（与 #settings 命令层行为一致）
+			if (settings.forwardToolCalls && settings.lastMessageOnly) {
+				settings.lastMessageOnly = false;
+				warn("配置中 forwardToolCalls 与 lastMessageOnly 同时开启，已自动关闭 lastMessageOnly");
+			}
+			return settings;
 		}
 	} catch {
 		// 忽略读取错误

@@ -3,6 +3,9 @@ import { existsSync, unlinkSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { InstanceEntry, QBSession, QqSettings } from "./types.js";
 
+/** 单行 IPC 消息最大字节数，超过即断开连接（防内存耗尽 DoS） */
+const MAX_LINE_BYTES = 1024 * 1024;
+
 export type IpcEnvelope =
 	| { type: "register"; entry: InstanceEntry }
 	| { type: "unregister" }
@@ -48,6 +51,10 @@ export function createIpcServer(sockPath: string, handlers: IpcServerOptions) {
 		let id: string | null = null;
 		sock.on("data", (data) => {
 			buf += data.toString("utf-8");
+			if (Buffer.byteLength(buf) > MAX_LINE_BYTES) {
+				sock.destroy();
+				return;
+			}
 			let idx: number;
 			while ((idx = buf.indexOf("\n")) >= 0) {
 				const line = buf.slice(0, idx).trim();
@@ -173,6 +180,10 @@ export function createIpcClient(sockPath: string, handlers: IpcClientOptions) {
 	});
 	client.on("data", (data) => {
 		buf += data.toString("utf-8");
+		if (Buffer.byteLength(buf) > MAX_LINE_BYTES) {
+			client.destroy();
+			return;
+		}
 		let idx: number;
 		while ((idx = buf.indexOf("\n")) >= 0) {
 			const line = buf.slice(0, idx).trim();

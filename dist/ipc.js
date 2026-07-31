@@ -1,6 +1,8 @@
 import { createServer, connect } from "node:net";
 import { existsSync, unlinkSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+/** 单行 IPC 消息最大字节数，超过即断开连接（防内存耗尽 DoS） */
+const MAX_LINE_BYTES = 1024 * 1024;
 export function createIpcServer(sockPath, handlers) {
     // Windows 命名管道是临时资源（server 关闭即消失），无需文件系统目录创建/清理；
     // 仅 Unix domain socket 需要 mkdir 目录 + unlink 残留 socket 文件。
@@ -23,6 +25,10 @@ export function createIpcServer(sockPath, handlers) {
         let id = null;
         sock.on("data", (data) => {
             buf += data.toString("utf-8");
+            if (Buffer.byteLength(buf) > MAX_LINE_BYTES) {
+                sock.destroy();
+                return;
+            }
             let idx;
             while ((idx = buf.indexOf("\n")) >= 0) {
                 const line = buf.slice(0, idx).trim();
@@ -151,6 +157,10 @@ export function createIpcClient(sockPath, handlers) {
     });
     client.on("data", (data) => {
         buf += data.toString("utf-8");
+        if (Buffer.byteLength(buf) > MAX_LINE_BYTES) {
+            client.destroy();
+            return;
+        }
         let idx;
         while ((idx = buf.indexOf("\n")) >= 0) {
             const line = buf.slice(0, idx).trim();

@@ -339,9 +339,17 @@ export default function (pi: ExtensionAPI) {
 				},
 				// follower 发起 settings 变更请求（#settings 命令路由到 leader）
 				onSettingsUpdate: (settings, instanceId) => {
-					_settings = settings;
+					if (!isValidSettings(settings)) {
+						logError(`follower ${instanceId} 发来非法 settings，已忽略`);
+						return;
+					}
+					// forwardToolCalls 与 lastMessageOnly 互斥
+					const normalized = settings.forwardToolCalls && settings.lastMessageOnly
+						? { ...settings, lastMessageOnly: false }
+						: settings;
+					_settings = normalized;
 					saveSettings(_settings);
-					info(`follower ${instanceId} 触发 settings 同步: ${JSON.stringify(settings)}`);
+					info(`follower ${instanceId} 触发 settings 同步: ${JSON.stringify(normalized)}`);
 					// 广播给所有 follower
 					_ipcServer?.broadcast({ type: "settings_changed", settings: _settings });
 				},
@@ -491,7 +499,42 @@ export default function (pi: ExtensionAPI) {
 		else if (_role === "follower" && _ipcClient) _ipcClient.send({ type: "claim", sessionKey: key });
 	}
 
+	// ── QQ 消息白名单（H1：防远程提示词注入/RCE）──
+	let _allowlistWarned = false;
+	function isAllowed(session: QBSession): boolean {
+		const users = config.allowedUsers;
+		const groups = config.allowedGroups;
+		const hasUsers = !!(users && users.length > 0);
+		const hasGroups = !!(groups && groups.length > 0);
+		if (!hasUsers && !hasGroups) {
+			// 未配置白名单：默认放行，但首次告警
+			if (!_allowlistWarned) {
+				_allowlistWarned = true;
+				warn("未配置 allowedUsers/allowedGroups 白名单，所有 QQ 消息均会被注入 pi（存在远程命令执行风险）。建议在配置文件中设置白名单。");
+			}
+			return true;
+		}
+		if (session.type === "c2c") return hasUsers ? users!.includes(session.id) : true;
+		if (session.type === "group") return hasGroups ? groups!.includes(session.id) : true;
+		return true; // channel 默认放行
+	}
+
+	/** 校验 follower 经 IPC 发来的 settings 结构，防注入畸形数据 */
+	function isValidSettings(s: unknown): s is QqSettings {
+		if (!s || typeof s !== "object") return false;
+		const o = s as Record<string, unknown>;
+		if (typeof o.forwardDesktopMessages !== "boolean") return false;
+		if (typeof o.forwardToolCalls !== "boolean") return false;
+		if (typeof o.lastMessageOnly !== "boolean") return false;
+		if (o.defaultSession !== undefined && (typeof o.defaultSession !== "object" || o.defaultSession === null)) return false;
+		return true;
+	}
+
 	async function handleInboundQqMessage(qqMsg: { session: QBSession; content: string }): Promise<void> {
+		if (!isAllowed(qqMsg.session)) {
+			warn(`拒绝非白名单消息: ${qqMsg.session.type}/${qqMsg.session.id}`);
+			return;
+		}
 		_lastActiveQqSession = qqMsg.session;
 		const sessionChanged =
 			!_settings.defaultSession ||
@@ -958,7 +1001,7 @@ async function disconnect(ctx: ExtensionContext): Promise<void> {
 		try {
 			await sendToQq(
 				target,
-				`**📤 结果** \n\`\`\`\n${text}\n\`\`\``,
+				`**📤 结果** \n\`\`\`\n${text.replace(/`{3,}/g, "'''")}\n\`\`\``,
 				replyTo,
 			);
 			debug(`工具结果已转发到 QQ`);

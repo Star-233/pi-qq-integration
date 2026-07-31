@@ -4,6 +4,11 @@ import type { QBSession, QqSettings } from "./types.js";
 import { debug, info } from "./logger.js";
 import { DEFAULTS } from "./constants.js";
 
+/** 转义反引号，防止用户可控内容逃逸 Markdown 代码段/代码块 */
+function esc(s: string): string {
+  return s.replace(/`/g, "'");
+}
+
 /**
  * QQ 消息中的命令处理器。
  * 解析 #cmd args 格式的命令并执行。
@@ -75,7 +80,7 @@ export function createCommandHandler(
         // 未知命令，不作为 prompt 处理
         await api.sendMarkdown(
           from,
-          `未知命令 \`${cmd}\`。发送 \`#help\` 查看可用命令。`
+          `未知命令 \`${esc(cmd)}\`。发送 \`#help\` 查看可用命令。`
         );
         return true;
     }
@@ -142,7 +147,7 @@ export function createCommandHandler(
     if (!match) {
       await api.sendMarkdown(
         session,
-        `Session \`${arg}\` 不存在。用 \`#sessions\` 查看所有可用 session。`
+        `Session \`${esc(arg)}\` 不存在。用 \`#sessions\` 查看所有可用 session。`
       );
       return;
     }
@@ -269,7 +274,7 @@ export function createCommandHandler(
 
     await api.sendMarkdown(
       session,
-      `未知设置项 \`${key}\`。使用 \`#settings\` 查看可用设置。`
+      `未知设置项 \`${esc(key)}\`。使用 \`#settings\` 查看可用设置。`
     );
   }
 
