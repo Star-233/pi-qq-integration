@@ -302,9 +302,10 @@ export default function (pi: ExtensionAPI) {
 		}
 	}
 
-	/** 出站消息统一署名前缀：实例唯一标识（instanceId），引用块格式与正文分隔 */
+	/** 出站消息统一署名前缀：session 名-PID（无 hostname），引用块格式与正文分隔 */
 	function decorate(text: string): string {
-		return `> 【${_instanceId}】\n${text}`;
+		const id = _sessionRef ? `${_sessionRef}-${_instanceId}` : _instanceId;
+		return `> 【${id}】\n${text}`;
 	}
 
 	// ── 引用消息定向路由（leader 持有 refIdxMap）──

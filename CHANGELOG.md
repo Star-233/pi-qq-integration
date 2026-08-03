@@ -15,7 +15,7 @@
 
 ### 新增
 - **出站消息统一署名**：所有发往 QQ 的消息自动加 `【instanceId】` 前缀，用户可一眼辨别消息来自哪个 pi 实例
-- **标识统一**：用户可见标识与内部唯一标识统一为 `instanceId`，**默认 = PID**（`#to <PID>` 切换，去掉了 hostname）；pi session 名仅作为参考展示在 `#instances`/`#to` 输出中，不参与区分/路由
+- **标识统一**：实例内部唯一标识默认 = PID（`#to <PID>` 切换，去掉了 hostname）；**出站署名显示 `> 【session名-PID】`**（未命名 session 时 `> 【PID】`），引用路由按署名尾部 PID 兜底匹配
 - **leader 故障转移**：follower 重连循环中定期尝试接管锁（`lock.acquire`，检测旧 leader PID 死亡/锁释放），成功后自动升级为新 leader，避免 leader 退出后 follower 无限重连；配置 `role: follower` 强制跟随时不升级
 - **实例显示名 = 当前活跃 pi session 名**：自动取 pi session 名（`/rename` 可自定义），回退 hostname/instanceId；session 切换或重命名时自动同步到注册表
 - **引用消息定向路由**：用户在 QQ 中「引用」某条消息回复时，按被引用消息的来源实例精确路由（基于 `ref_idx` 映射，60 分钟 TTL）；映射未命中时按消息署名兜底匹配

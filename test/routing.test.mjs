@@ -59,9 +59,41 @@ test("resolveRouteInstance: 署名兜底匹配 instanceId", () => {
 		resolveRouteInstance({ refMsgContent: "> 【host-B-222】\n回复内容" }, new Map(), instances),
 		"host-B-222"
 	);
+	// session名-PID 格式署名（decorate 新格式）：按 PID 后缀匹配
+	assert.equal(
+		resolveRouteInstance({ refMsgContent: "> 【项目A-host-B-222】\n回复" }, new Map(), instances),
+		"host-B-222"
+	);
 	// 不存在该 id → 不路由
 	assert.equal(
 		resolveRouteInstance({ refMsgContent: "【host-X】回复" }, new Map(), instances),
+		null
+	);
+});
+
+test("resolveRouteInstance: PID 实例的署名兜底（session名-PID）", () => {
+	const pidInstances = {
+		"3863": { id: "3863", pid: 3863, role: "leader", name: "项目A", claimedSessions: [] },
+		"2178": { id: "2178", pid: 2178, role: "follower", name: "项目B", claimedSessions: [] },
+	};
+	// 署名 【项目A-3863】 → 匹配 PID 3863
+	assert.equal(
+		resolveRouteInstance({ refMsgContent: "> 【项目A-3863】\n回复" }, new Map(), pidInstances),
+		"3863"
+	);
+	// 未命名 session 时署名 【3863】 → 精确匹配
+	assert.equal(
+		resolveRouteInstance({ refMsgContent: "> 【2178】\n回复" }, new Map(), pidInstances),
+		"2178"
+	);
+	// session 名含短横线也不误匹配（后缀是 PID）
+	assert.equal(
+		resolveRouteInstance({ refMsgContent: "> 【项目-B-3863】\n回复" }, new Map(), pidInstances),
+		"3863"
+	);
+	// 不存在的 PID 后缀 → 不路由
+	assert.equal(
+		resolveRouteInstance({ refMsgContent: "> 【项目A-9999】\n回复" }, new Map(), pidInstances),
 		null
 	);
 });

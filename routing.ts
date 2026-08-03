@@ -51,7 +51,10 @@ export function resolveRouteInstance(
 		if (qqMsg.refMsgFromBot === false) return null;
 		const signed = extractBracketName(qqMsg.refMsgContent);
 		if (signed) {
-			const matches = Object.values(instances).filter((i) => i.id === signed);
+			// 署名可能是 session名-PID 格式：精确匹配 id，或按 PID 后缀匹配
+			const matches = Object.values(instances).filter(
+				(i) => i.id === signed || signed.endsWith(`-${i.id}`)
+			);
 			return matches.length === 1 ? matches[0].id : null;
 		}
 	}
