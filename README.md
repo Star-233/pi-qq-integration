@@ -171,7 +171,7 @@ Messages sent in QQ that start with `#` are treated as commands. Anything else i
 |---------|-------------|
 | `#help` | Show help |
 | `#sessions [page]` | List all sessions across projects, 10 per page, most recently used first |
-| `#history [N]` | View last N messages in the most recently active session (default: 5) |
+| `#history [N]` | View last N messages in the current instance's session (default: 5) |
 | `#target` | Set current QQ conversation as default forwarding target |
 | `#settings` | View/modify forwarding settings (`#setting` is an alias) |
 | `#instances` | List online instances (ID, role, claimed sessions with name/last-message preview) |

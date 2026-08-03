@@ -1,25 +1,26 @@
 ## 测试体系
 
 - 新增 `npm test`（`node --test`，零第三方依赖，Node ≥ 20 内置测试框架）
-- `test/` 目录 5 个测试文件、39 个用例：
+- `test/` 目录 6 个测试文件、52 个用例：
   - `validation.test.mjs` — session 结构/sessionKey/参考名清洗校验
   - `routing.test.mjs` — ref_idx 精确路由、署名兜底、#to 解析（纯函数，依赖注入）
   - `lock.test.mjs` — 文件锁互斥/死亡接管/同 PID 恢复/心跳（临时目录 + 子进程）
-  - `registry.test.mjs` — registry 读写/认领唯一性/leader 记录/pruneDead（`QQ_INTEGRATION_DATA_DIR` 隔离）
+  - `registry.test.mjs` — registry 读写/认领唯一性/leader 记录/pruneDead/认领展示信息（`QQ_INTEGRATION_DATA_DIR` 隔离）
   - `ipc.test.mjs` — IPC 真实 socket 收发/同 id 重连接管/非法注册断开
+  - `command.test.mjs` — 命令分发（#create/#close 多 PID/#sessions 分页/#instances 认领展示/移除命令引导）
 - 纯逻辑抽离到独立模块：`validation.ts`（校验）、`routing.ts`（路由），index.ts 直接 import（不再测试逻辑副本）
 
 ## 0.5.2
 
 - 新增 `#create`：leader 从 QQ 侧 spawn 新的 pi 实例（follower）——`#create <序号/名称>` 复用现有 session（`--session` + session 头部真实 cwd），`#create new [--dir <目录>]` 全新 session（缺省当前实例 cwd）。rpc mode headless 长驻，`tail -f /dev/null |` 保活 stdin（不随 leader 生命周期），实例 ID = PID
 - 新增 `#close <实例ID>`：关闭指定实例（registry 匹配 + `/proc/<pid>/cmdline` 校验防误杀，SIGTERM → 超时 SIGKILL）；可关闭 leader（先回复再退出，剩余实例自动重新选举）
-- `#sessions` 改为显示全部 session（不再按实例目录过滤），按最近使用时间降序，支持分页（每页 10 条，`#sessions <页码>`，全局序号跨页连续，直接用于 `#resume`/`#create`）
-- `#resume` 匹配改为全量 session 列表（与 `#sessions` 序号一致）
+- `#sessions` 改为显示全部 session（不再按实例目录过滤），按最近使用时间降序，支持分页（每页 10 条，`#sessions <页码>`，全局序号跨页连续，直接用于 `#create`）
+- 移除 `#resume` 后，`#create <序号/名称>` 复用 session 时与 `#sessions` 全局序号保持一致
 - session-manager 新增 `formatSessionListPage`（分页）、`getSessionCwd`（读 session 头部 cwd，零歧义）、`unencodeProjectDir`（项目目录名反解，existsSync 消歧）
 - `#close` 支持多 PID：`#close 123 456` 空格分隔逐个关闭并汇总回复（✅ 已关闭 / ❌ 失败原因）；多 PID 含自己时先关其他、自己最后退出
 - `#instances` 展示每个实例的认领会话（缩进列表）：名字优先（QQ 会话名），无名字用最近消息摘要，60 字符截断 + 相对时间；claim 时把会话名字/最近消息写入 registry（`claimedSessionInfo`，向后兼容旧数据）
 - `#sessions` / `#instances` 摘要截断统一为 60 字符（`SESSION_PREVIEW_LEN`，#history 仍为 300）
-- 修复：`#create`/`#close` 命令分发缺失（case 未编译进 switch，导致 `#create new` 提示未知命令）；新增 `command.test.mjs`（7 用例）覆盖命令分发/spawn 参数/分页/移除命令引导
+- 修复：`#create`/`#close` 命令分发缺失（case 未编译进 switch，导致 `#create new` 提示未知命令）；新增 `command.test.mjs`（11 用例）覆盖命令分发/spawn 参数/分页/移除命令引导
 - 修复（审查）：follower claim / reroute 不再清空认领展示信息（`setClaim` 未提供 info 时保留现有；IPC `claim` 信封透传 `info`，leader 侧清洗后落库）
 - 修复（审查）：`#sessions` 页码越界时 clamp（页脚显示实际页，不再出现「第 99/2 页」）；spawn 补 `child.on('error')` 监听防 uncaughtException 拖崩宿主
 - 版本号对齐：package.json / package-lock.json bump 至 0.5.2（此前 lock 文件滞后在 0.2.0，直接发版会导致 npm publish 发布错误版本）

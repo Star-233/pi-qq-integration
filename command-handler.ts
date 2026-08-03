@@ -140,11 +140,11 @@ export function createCommandHandler(
         "| `#history [N]` | 查看最近 N 条消息 (默认 5) |",
         "| `#settings` | 查看/修改转发设置 |",
         "| `#target` | 将当前 QQ 会话设为默认转发目标 |",
-        "| `#instances` | 列出所有在线 pi 实例 |",
+        "| `#instances` | 列出在线实例（含认领会话的名字/最近消息） |",
         "| `#to <实例> [内容]` | 切换当前会话到指定实例（带内容则定向发送） |",
         "| `#create <序号/名称>` | 创建新实例并复用指定 session |",
-        "| `#create new [--dir <目录>]` | 创建全新 session 的新实例（可指定工作目录）|",
-        "| `#close <实例ID>` | 关闭指定实例 |",
+        "| `#create new [--dir <目录>]` | 创建全新 session 的新实例（可指定工作目录） |",
+        "| `#close <PID> [PID...]` | 关闭实例（支持空格分隔多个 PID） |",
       ].join("\n")
     );
   }
@@ -263,7 +263,7 @@ export function createCommandHandler(
       .map((p) => parseInt(p, 10))
       .filter((p) => Number.isInteger(p) && p > 0);
     if (pids.length === 0) {
-      await api.sendText(session, "用法: `#close <实例ID> [实例ID ...]`（用 `#instances` 查看在线实例）");
+      await api.sendText(session, "用法: `#close <PID> [PID ...]`（用 `#instances` 查看在线实例）");
       return;
     }
     const closed: number[] = [];
