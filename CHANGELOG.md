@@ -9,6 +9,11 @@
   - `ipc.test.mjs` — IPC 真实 socket 收发/同 id 重连接管/非法注册断开
 - 纯逻辑抽离到独立模块：`validation.ts`（校验）、`routing.ts`（路由），index.ts 直接 import（不再测试逻辑副本）
 
+## 0.5.1
+
+- 新增 GitHub Actions 自动发布 workflow（`.github/workflows/release.yml`）：push `v*` tag 后自动执行 typecheck + test、从 CHANGELOG 提取对应版本段创建 **GitHub Release**、`npm publish` 发布到 npm（首次需在仓库 Secrets 配置 `NPM_TOKEN`；也可手动 `workflow_dispatch` 触发）
+- 新增 `scripts/extract-changelog-notes.mjs`：从 CHANGELOG 提取版本段落（Release 正文来源）
+
 ## 0.5.0
 
 **新功能：多实例消息来源标识 + 定向回复路由**

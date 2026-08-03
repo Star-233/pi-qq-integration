@@ -1,6 +1,6 @@
 {
 	"name": "pi-qq-integration",
-	"version": "0.5.0",
+	"version": "0.5.1",
 	"description": "QQ integration for pi — control pi from QQ | pi QQ 集成 — 在 QQ 中操控 pi",
 	"private": false,
 	"type": "module",
