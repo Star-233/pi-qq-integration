@@ -10,6 +10,21 @@
 - **`#instances` 命令**：列出所有在线实例（显示名/角色/认领会话数）
 - 群聊（GROUP_AT_MESSAGE_CREATE）同样支持引用消息解析（需实测确认）
 
+### 安全加固（审计后）
+- 修复：`#to` 确认回复不再回夺会话认领（follower 场景下切换失效的严重 bug）
+- 安全：IPC 新增端点（inject/reroute/instance_update）全量结构校验 + 权限约束（inject 仅合法实例、reroute 仅当前 claimer）
+- 安全：register 连接级唯一性校验（防伪造实例条目/身份接管）
+- 安全：引用署名兜底改为唯一匹配 + 校验被引用消息确为机器人所发（防消息定向劫持）
+- 安全：实例名自动唯一化（重名加后缀，防署名冒用/定向歧义）
+- 安全：isAllowed 未知会话类型一律拒绝（防伪造类型绕过白名单）
+- 安全：`#instances` 输出脱敏（不再暴露 instanceId/主机名/PID）
+- 加固：显示名清洗（去控制字符/限长）、markdown 转义增强、refIdxMap 硬上限驱逐、leader 命令回复也记录 ref_idx
+
+### 已知限制
+- registry 多进程写入为无锁 read-modify-write（原子写防损坏，但跨进程存在极小丢失更新窗口；依赖 30s pruneDead 收敛）
+- 引用路由的精确匹配依赖 QQ API 返回 `ext_info.ref_idx` 与引用事件 `ref_msg_idx`，需真实环境实测；未返回时自动降级为署名唯一匹配
+- `#to <名> <内容>` 中实例名与内容存在前缀歧义时（如 `web` 与 `web dev`），优先匹配更长实例名，可用 `#to` 切换后单独发消息规避
+
 # Changelog
 
 ## 0.4.4

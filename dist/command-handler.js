@@ -1,8 +1,11 @@
 import { debug, info } from "./logger.js";
 import { DEFAULTS } from "./constants.js";
-/** 转义反引号，防止用户可控内容逃逸 Markdown 代码段/代码块 */
+/** 转义用户可控内容，防止逃逸 Markdown 代码段/代码块/粗体 */
 function esc(s) {
-    return s.replace(/`/g, "'");
+    return s
+        .replace(/`/g, "'")
+        .replace(/\*/g, "\\*")
+        .replace(/\n/g, " ");
 }
 /**
  * QQ 消息中的命令处理器。
@@ -232,7 +235,8 @@ export function createCommandHandler(api, sessionManager, callbacks) {
             const roleMark = i.role === "leader" ? "🔑 leader" : "👤 follower";
             const claimed = i.claimedSessions?.length ?? 0;
             const name = i.name?.trim() || i.id;
-            return `- **${esc(name)}** — ${roleMark}，认领 ${claimed} 个会话（\`${i.id}\`）`;
+            // 脱敏：不暴露 instanceId（含主机名/PID）
+            return `- **${esc(name)}** — ${roleMark}，认领 ${claimed} 个会话`;
         });
         await api.sendMarkdown(session, ["## 📋 在线实例", "", "用 `#to <实例名>` 将当前会话切换到指定实例", "", ...lines].join("\n"));
     }
@@ -275,10 +279,12 @@ export function createCommandHandler(api, sessionManager, callbacks) {
         const displayName = entry.name?.trim() || entry.id;
         if (content) {
             callbacks.injectTo?.(entry.id, session, content);
-            await api.sendMarkdown(session, `✅ 已切换到实例 **${esc(displayName)}**，你的消息已送达：\`${esc(content.slice(0, 50))}\``);
+            // 确认回复不参与会话认领（claim 已由 reroute 切到目标实例）
+            await api.sendMarkdown(session, `✅ 已切换到实例 **${esc(displayName)}**，你的消息已送达：\`${esc(content.slice(0, 50))}\``, undefined, { claim: false });
         }
         else {
-            await api.sendMarkdown(session, `✅ 当前会话已切换到实例 **${esc(displayName)}**，之后的回复将路由到该实例。`);
+            // 确认回复不参与会话认领（claim 已由 reroute 切到目标实例）
+            await api.sendMarkdown(session, `✅ 当前会话已切换到实例 **${esc(displayName)}**，之后的回复将路由到该实例。`, undefined, { claim: false });
         }
     }
     return { tryHandle };

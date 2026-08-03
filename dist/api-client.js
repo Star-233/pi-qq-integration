@@ -66,7 +66,9 @@ export function createApiClient(auth, options) {
     /**
      * 发送消息到指定会话
      */
-    async function sendMessage(session, text, options) {
+    async function sendMessage(session, text, options, 
+    // claim 仅供本地包装层使用（如 #to 确认回复不参与会话认领），HTTP 层忽略
+    _opts) {
         const body = {
             content: text,
             msg_type: options?.msgType ?? 0, // 0=文本, 2=Markdown
@@ -97,7 +99,7 @@ export function createApiClient(auth, options) {
     /**
      * 发送纯文本消息
      */
-    async function sendText(session, text, replyTo) {
+    async function sendText(session, text, replyTo, _opts) {
         return await sendMessage(session, text, {
             msgType: 0,
             msgId: replyTo?.msgId,
@@ -107,7 +109,7 @@ export function createApiClient(auth, options) {
     /**
      * 发送 Markdown 消息
      */
-    async function sendMarkdown(session, markdown, replyTo) {
+    async function sendMarkdown(session, markdown, replyTo, _opts) {
         const body = {
             content: "",
             msg_type: 2,

@@ -103,7 +103,12 @@ export interface MessageCreateEvent {
   /** 消息场景上下文：ext 为 key=value 数组，含 msg_idx / ref_msg_idx=REFIDX_xxx */
   message_scene?: { source?: string; ext?: string[] };
   /** 引用消息时包含被引用内容（[0] 为被引用的原始消息） */
-  msg_elements?: { msg_idx?: string; content?: string; message_type?: number }[];
+  msg_elements?: {
+    msg_idx?: string;
+    content?: string;
+    message_type?: number;
+    author?: { id?: string; bot?: boolean };
+  }[];
 }
 
 export interface GroupAddRobotEvent {
@@ -168,6 +173,8 @@ export interface QQMessage {
   refMsgIdx?: string;
   /** 被引用消息内容（msg_elements[0].content），用于署名兜底路由 */
   refMsgContent?: string;
+  /** 被引用消息是否为机器人所发（msg_elements[0].author.bot，QQ 未返回时为空） */
+  refMsgFromBot?: boolean;
 }
 
 // ── QQ Bot 转发设置 ──

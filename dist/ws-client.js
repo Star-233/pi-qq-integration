@@ -197,6 +197,7 @@ export function createWsClient(auth, options) {
             messageType: raw.message_type,
             refMsgIdx,
             refMsgContent: raw.msg_elements?.[0]?.content,
+            refMsgFromBot: raw.msg_elements?.[0]?.author?.bot,
         };
     }
     function startHeartbeat() {

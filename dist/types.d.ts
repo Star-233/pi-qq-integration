@@ -94,6 +94,10 @@ export interface MessageCreateEvent {
         msg_idx?: string;
         content?: string;
         message_type?: number;
+        author?: {
+            id?: string;
+            bot?: boolean;
+        };
     }[];
 }
 export interface GroupAddRobotEvent {
@@ -155,6 +159,8 @@ export interface QQMessage {
     refMsgIdx?: string;
     /** 被引用消息内容（msg_elements[0].content），用于署名兜底路由 */
     refMsgContent?: string;
+    /** 被引用消息是否为机器人所发（msg_elements[0].author.bot，QQ 未返回时为空） */
+    refMsgFromBot?: boolean;
 }
 export interface QqSettings {
     forwardDesktopMessages: boolean;

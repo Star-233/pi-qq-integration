@@ -93,7 +93,9 @@ export function createApiClient(auth: AuthManager, options?: CreateApiClientOpti
       msgId?: string;
       eventId?: string;
       msgType?: number;
-    }
+    },
+    // claim 仅供本地包装层使用（如 #to 确认回复不参与会话认领），HTTP 层忽略
+    _opts?: { claim?: boolean }
   ): Promise<SendMessageResponse> {
     const body: SendMessageRequest = {
       content: text,
@@ -132,7 +134,8 @@ export function createApiClient(auth: AuthManager, options?: CreateApiClientOpti
   async function sendText(
     session: QBSession,
     text: string,
-    replyTo?: { msgId?: string; eventId?: string }
+    replyTo?: { msgId?: string; eventId?: string },
+    _opts?: { claim?: boolean }
   ): Promise<SendMessageResponse> {
     return await sendMessage(session, text, {
       msgType: 0,
@@ -147,7 +150,8 @@ export function createApiClient(auth: AuthManager, options?: CreateApiClientOpti
   async function sendMarkdown(
     session: QBSession,
     markdown: string,
-    replyTo?: { msgId?: string; eventId?: string }
+    replyTo?: { msgId?: string; eventId?: string },
+    _opts?: { claim?: boolean }
   ): Promise<SendMessageResponse> {
     const body: SendMessageRequest = {
       content: "",

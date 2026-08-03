@@ -207,7 +207,7 @@ export default function (pi) {
         catch {
             // 忽略
         }
-        const next = name || hostname() || _instanceId;
+        const next = sanitizeDisplayName(name) || hostname() || _instanceId;
         if (next !== _displayName) {
             _displayName = next;
             info(`实例显示名更新: ${_displayName}`);
@@ -240,14 +240,21 @@ export default function (pi) {
         if (refIdx) {
             _refIdxMap.set(refIdx, { instanceId, ts: Date.now() });
             if (_refIdxMap.size > 1000)
-                pruneRefIdxMap();
+                pruneRefIdxMap(true);
         }
     }
-    function pruneRefIdxMap() {
+    function pruneRefIdxMap(hard = false) {
         const now = Date.now();
         for (const [k, v] of _refIdxMap) {
             if (now - v.ts > REF_IDX_TTL_MS)
                 _refIdxMap.delete(k);
+        }
+        if (hard && _refIdxMap.size > 1000) {
+            // 仍超限：驱逐最旧条目（硬上限防内存膨胀）
+            const sorted = [..._refIdxMap.entries()].sort((a, b) => a[1].ts - b[1].ts);
+            const excess = sorted.length - 1000;
+            for (let i = 0; i < excess; i++)
+                _refIdxMap.delete(sorted[i][0]);
         }
     }
     /** 解析引用消息应路由到的实例 id：ref_idx 精确映射优先，署名匹配兜底 */
@@ -260,13 +267,14 @@ export default function (pi) {
                 _refIdxMap.delete(qqMsg.refMsgIdx);
             }
         }
+        // 署名兜底：被引用消息确为机器人所发（字段存在时），且恰好一个实例名匹配才路由
         if (qqMsg.refMsgContent) {
+            if (qqMsg.refMsgFromBot === false)
+                return null;
             const name = extractBracketName(qqMsg.refMsgContent);
             if (name) {
-                for (const inst of Object.values(readRegistry().instances)) {
-                    if (inst.name === name)
-                        return inst.id;
-                }
+                const matches = Object.values(readRegistry().instances).filter((i) => i.name === name);
+                return matches.length === 1 ? matches[0].id : null;
             }
         }
         return null;
@@ -293,6 +301,8 @@ export default function (pi) {
             return false;
         }
         if (_role === "follower" && _ipcClient) {
+            if (!_ipcClient.isConnected())
+                return false;
             _ipcClient.send({ type: "reroute", sessionKey: key, targetId });
             return true;
         }
@@ -315,6 +325,8 @@ export default function (pi) {
             return;
         }
         if (_role === "follower" && _ipcClient) {
+            if (!_ipcClient.isConnected())
+                return;
             _ipcClient.send({ type: "inject", session, content });
         }
     }
@@ -348,11 +360,26 @@ export default function (pi) {
                 },
             });
             _sm = createSessionManager();
-            // 命令回复同样带实例署名（leader 直接发，包装 api 统一加前缀）
+            // 命令回复同样带实例署名（leader 直接发，包装 api 统一加前缀 + 记录 ref_idx）
             const leaderCmdApi = {
-                sendMarkdown: (s, md, r) => _api.sendMarkdown(s, decorate(md), r),
-                sendText: (s, t, r) => _api.sendText(s, decorate(t), r),
-                sendMessage: (s, t, o) => _api.sendMessage(s, decorate(t), o),
+                sendMarkdown: (s, md, r) => (_api
+                    ? _api.sendMarkdown(s, decorate(md), r).then((resp) => {
+                        trackSentRef(resp, _instanceId);
+                        return resp;
+                    })
+                    : Promise.resolve({})),
+                sendText: (s, t, r) => (_api
+                    ? _api.sendText(s, decorate(t), r).then((resp) => {
+                        trackSentRef(resp, _instanceId);
+                        return resp;
+                    })
+                    : Promise.resolve({})),
+                sendMessage: (s, t, o) => (_api
+                    ? _api.sendMessage(s, decorate(t), o).then((resp) => {
+                        trackSentRef(resp, _instanceId);
+                        return resp;
+                    })
+                    : Promise.resolve({})),
             };
             _cmdHandler = createCommandHandler(leaderCmdApi, _sm, {
                 sendUserMessage: (text) => pi.sendUserMessage(text),
@@ -419,8 +446,29 @@ export default function (pi) {
             });
             // 启动 IPC 服务，接收 follower 的注册/认领/出站请求
             _ipcServer = createIpcServer(LEADER_SOCK_PATH, {
-                onRegister: (entry) => upsertInstance(entry),
-                onClaim: (sessionKey, instanceId) => setClaim(instanceId, sessionKey),
+                onRegister: (entry) => {
+                    // 基本结构校验，防伪造实例条目
+                    if (!entry ||
+                        typeof entry.id !== "string" ||
+                        entry.id.length === 0 ||
+                        entry.id.length > 128 ||
+                        !Number.isInteger(entry.pid)) {
+                        logError("register 拒绝: 非法实例条目");
+                        return;
+                    }
+                    // 显示名清洗 + 唯一化（防署名冒用/定向歧义）
+                    const name = entry.name
+                        ? uniqueInstanceName(sanitizeDisplayName(entry.name), entry.id)
+                        : undefined;
+                    upsertInstance({ ...entry, name });
+                },
+                onClaim: (sessionKey, instanceId) => {
+                    if (!isValidSessionKey(sessionKey)) {
+                        logError(`claim 拒绝: 非法 sessionKey ${sessionKey}`);
+                        return;
+                    }
+                    setClaim(instanceId, sessionKey);
+                },
                 onOutbound: (msg, instanceId) => {
                     if (_api) {
                         _api.sendMarkdown(msg.target, msg.content, msg.replyTo)
@@ -430,12 +478,29 @@ export default function (pi) {
                 },
                 onInstanceUpdate: (name, instanceId) => {
                     const inst = readRegistry().instances[instanceId];
-                    if (inst) {
-                        upsertInstance({ ...inst, name });
-                        debug(`实例 ${instanceId} 显示名更新: ${name}`);
+                    if (!inst) {
+                        logError(`instance_update 拒绝: 未知实例 ${instanceId}`);
+                        return;
                     }
+                    const cleaned = sanitizeDisplayName(name);
+                    if (!cleaned)
+                        return;
+                    // 重名唯一化
+                    const unique = uniqueInstanceName(cleaned, instanceId);
+                    upsertInstance({ ...inst, name: unique });
+                    debug(`实例 ${instanceId} 显示名更新: ${unique}`);
                 },
-                onReroute: (sessionKey, targetId) => {
+                onReroute: (sessionKey, targetId, fromId) => {
+                    if (!isValidSessionKey(sessionKey) || typeof targetId !== "string" || !targetId || targetId.length > 128) {
+                        logError(`reroute 拒绝: 非法参数`);
+                        return;
+                    }
+                    // 权限：请求方必须是当前 claimer（或会话无主），防任意挪动认领
+                    const cur = findClaimer(sessionKey);
+                    if (cur && cur.id !== fromId) {
+                        logError(`reroute 拒绝: 会话 ${sessionKey} 由 ${cur.id} 认领，非请求方 ${fromId}`);
+                        return;
+                    }
                     const reg = readRegistry();
                     const target = reg.instances[targetId];
                     if (target && (targetId === _instanceId || _ipcServer?.has(targetId))) {
@@ -446,8 +511,13 @@ export default function (pi) {
                         logError(`reroute 目标实例不可用: ${targetId}`);
                     }
                 },
-                onInject: (session, content) => {
+                onInject: (session, content, fromId) => {
+                    if (!isValidSession(session) || typeof content !== "string" || content.length === 0 || content.length > 4000) {
+                        logError(`inject 拒绝: 非法参数`);
+                        return;
+                    }
                     const sessionKey = `${session.type}:${session.id}`;
+                    // 按当前认领路由；内容本身仍走 isAllowed 白名单（与 QQ 消息同级防线）
                     const claimer = findClaimer(sessionKey);
                     if (claimer && claimer.id !== _instanceId && _ipcServer?.has(claimer.id)) {
                         _ipcServer.sendTo(claimer.id, {
@@ -510,16 +580,16 @@ export default function (pi) {
         ctx.ui.notify("QQ Bot: 作为 follower 连接 leader...", "info");
         // follower 没有真实 QQ 连接：所有出站都经 IPC 转给 leader 代发
         const followerApi = {
-            async sendMarkdown(session, markdown, replyTo) {
-                await sendToQq(session, markdown, replyTo);
+            async sendMarkdown(session, markdown, replyTo, opts) {
+                await sendToQq(session, markdown, replyTo, opts);
                 return {};
             },
-            async sendText(session, text, replyTo) {
-                await sendToQq(session, text, replyTo);
+            async sendText(session, text, replyTo, opts) {
+                await sendToQq(session, text, replyTo, opts);
                 return {};
             },
-            async sendMessage(session, text, options) {
-                await sendToQq(session, text, options ? { msgId: options.msgId, eventId: options.eventId } : undefined);
+            async sendMessage(session, text, options, opts) {
+                await sendToQq(session, text, options ? { msgId: options.msgId, eventId: options.eventId } : undefined, opts);
                 return {};
             },
         };
@@ -606,8 +676,9 @@ export default function (pi) {
             tryFollower(ctx);
         }, delay);
     }
-    async function sendToQq(target, content, replyTo) {
-        claimSession(target);
+    async function sendToQq(target, content, replyTo, opts) {
+        if (opts?.claim !== false)
+            claimSession(target);
         const signed = decorate(content);
         if (_role === "leader" && _api) {
             try {
@@ -635,6 +706,10 @@ export default function (pi) {
     // ── QQ 消息白名单（H1：防远程提示词注入/RCE）──
     let _allowlistWarned = false;
     function isAllowed(session) {
+        // 只允许已知会话类型，未知类型一律拒绝（防伪造类型绕过白名单）
+        if (session.type !== "c2c" && session.type !== "group" && session.type !== "channel") {
+            return false;
+        }
         const users = config.allowedUsers;
         const groups = config.allowedGroups;
         const hasUsers = !!(users && users.length > 0);
@@ -667,6 +742,52 @@ export default function (pi) {
         if (o.defaultSession !== undefined && (typeof o.defaultSession !== "object" || o.defaultSession === null))
             return false;
         return true;
+    }
+    // ── IPC 入站数据校验（与 isValidSettings 同范式，防注入畸形数据）──
+    /** session.id 仅允许安全字符（与 api-client 一致） */
+    const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+    /** 校验 QQ 会话对象结构（inject 等 IPC 入站数据） */
+    function isValidSession(s) {
+        if (!s || typeof s !== "object")
+            return false;
+        const o = s;
+        if (o.type !== "c2c" && o.type !== "group" && o.type !== "channel")
+            return false;
+        if (typeof o.id !== "string" || !SESSION_ID_RE.test(o.id))
+            return false;
+        if (o.name !== undefined && typeof o.name !== "string")
+            return false;
+        if (o.userId !== undefined && typeof o.userId !== "string")
+            return false;
+        if (o.msgId !== undefined && typeof o.msgId !== "string")
+            return false;
+        if (o.eventId !== undefined && typeof o.eventId !== "string")
+            return false;
+        return true;
+    }
+    /** 校验会话认领 key 格式（c2c|group|channel:id） */
+    function isValidSessionKey(key) {
+        const idx = key.indexOf(":");
+        if (idx <= 0)
+            return false;
+        const type = key.slice(0, idx);
+        const id = key.slice(idx + 1);
+        return (type === "c2c" || type === "group" || type === "channel") && SESSION_ID_RE.test(id);
+    }
+    /** 清洗显示名：去控制字符/换行，限制长度，避免破坏 markdown 署名 */
+    function sanitizeDisplayName(name) {
+        if (!name)
+            return "";
+        return name.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 64);
+    }
+    /** 实例名唯一化：与现存其他实例重名时自动加短后缀（防署名冒用/定向歧义） */
+    function uniqueInstanceName(name, excludeId) {
+        const conflict = Object.values(readRegistry().instances).some((i) => i.id !== excludeId && i.name === name);
+        if (!conflict)
+            return name;
+        const shortId = excludeId.replace(/[^A-Za-z0-9]/g, "").slice(-6) || "x";
+        const suffixed = `${name}(${shortId})`;
+        return suffixed.slice(0, 80);
     }
     async function handleInboundQqMessage(qqMsg) {
         if (!isAllowed(qqMsg.session)) {

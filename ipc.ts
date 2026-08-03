@@ -73,7 +73,26 @@ export function createIpcServer(sockPath: string, handlers: IpcServerOptions) {
 				try {
 					const env = JSON.parse(line) as IpcEnvelope;
 					if (env.type === "register") {
+						// 基本校验：非法注册直接断开（防伪造条目/内存占用）
+						if (
+							!env.entry ||
+							typeof env.entry.id !== "string" ||
+							env.entry.id.length === 0 ||
+							env.entry.id.length > 128
+						) {
+							sock.destroy();
+							return;
+						}
 						id = env.entry.id;
+						// 连接级唯一性：同 id 已连接时断开旧连接，由新连接接管（兼容重连）
+						const existing = conns.get(id);
+						if (existing && existing !== sock) {
+							try {
+								existing.destroy();
+							} catch {
+								// 忽略
+							}
+						}
 						conns.set(id, sock);
 						handlers.onRegister?.(env.entry);
 					} else if (env.type === "claim" && id) {

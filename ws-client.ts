@@ -275,6 +275,7 @@ export function createWsClient(auth: AuthManager, options?: WsClientOptions): Ws
 			messageType: raw.message_type,
 			refMsgIdx,
 			refMsgContent: raw.msg_elements?.[0]?.content,
+			refMsgFromBot: raw.msg_elements?.[0]?.author?.bot,
 		};
 	}
 

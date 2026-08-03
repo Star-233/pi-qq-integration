@@ -12,14 +12,20 @@ export declare function createApiClient(auth: AuthManager, options?: CreateApiCl
         msgId?: string;
         eventId?: string;
         msgType?: number;
+    }, _opts?: {
+        claim?: boolean;
     }) => Promise<SendMessageResponse>;
     sendText: (session: QBSession, text: string, replyTo?: {
         msgId?: string;
         eventId?: string;
+    }, _opts?: {
+        claim?: boolean;
     }) => Promise<SendMessageResponse>;
     sendMarkdown: (session: QBSession, markdown: string, replyTo?: {
         msgId?: string;
         eventId?: string;
+    }, _opts?: {
+        claim?: boolean;
     }) => Promise<SendMessageResponse>;
 };
 export type ApiClient = ReturnType<typeof createApiClient>;
