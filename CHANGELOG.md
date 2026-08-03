@@ -12,6 +12,8 @@
 ## 0.5.2
 
 - 修复：`#history` 在多实例下展示错误实例的消息——原实现取「全局最近修改」的 session 文件（可能属于其他实例，导致看到的不是当前实例的对话）；改为通过当前实例的 `sessionManager.getSessionFile()` 定向读取本实例的 session 历史（session 切换后自动指向新文件）；拿不到时回退旧逻辑
+- 修复：`#sessions` 只显示**当前工作目录**下的 session（多实例共享 sessions 目录时不再混入其他项目的会话）；展示格式改为「自定义名（/rename）优先，否则最后一条用户消息摘要」+ 相对时间
+- 修复：`#new` 真正执行创建新 session（hack 直接调 `sessionManager.newSession()`，pi 扩展 API 未暴露该方法；实测有问题则回退为终端提示）
 
 ## 0.5.1
 

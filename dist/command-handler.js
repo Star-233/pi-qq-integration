@@ -84,7 +84,7 @@ export function createCommandHandler(api, sessionManager, callbacks) {
         ].join("\n"));
     }
     async function cmdSessions(session) {
-        const list = sessionManager.formatSessionList();
+        const list = sessionManager.formatSessionList(callbacks.getCwd?.() ?? undefined);
         debug(`#sessions: 返回 ${list.split("\n").length} 条`);
         await api.sendMarkdown(session, [
             "## 📋 Pi Sessions",
@@ -119,7 +119,9 @@ export function createCommandHandler(api, sessionManager, callbacks) {
         await api.sendMarkdown(session, `请在 pi 终端中输入 \`/resume ${match.rawName}\` 切换 session`);
     }
     async function cmdNew(session) {
-        await api.sendMarkdown(session, "请在 pi 终端中输入 `/new` 创建新 session");
+        // 真正执行 newSession（index.ts 的 callbacks.newSession 直接调 sessionManager.newSession）
+        const ok = callbacks.newSession();
+        await api.sendMarkdown(session, ok ? "✅ 已创建新 session" : "❌ 创建新 session 失败（当前实例无 sessionManager 引用，请在 pi 终端执行 `/new`）");
     }
     async function cmdClear(session) {
         await api.sendText(session, "请在 pi 终端中输入 `/compact` 压缩对话");

@@ -8,7 +8,7 @@ import type { InstanceEntry, QBSession, QqSettings } from "./types.js";
 export declare function createCommandHandler(api: ApiClient, sessionManager: SessionManager, callbacks: {
     sendUserMessage: (text: string) => void;
     switchSession: (name: string) => void;
-    newSession: () => void;
+    newSession: () => boolean;
     clearSession: () => void;
     getSettings: () => QqSettings;
     updateSettings: (update: Partial<QqSettings>) => void;
@@ -19,6 +19,7 @@ export declare function createCommandHandler(api: ApiClient, sessionManager: Ses
     injectTo?: (targetId: string, session: QBSession, content: string) => void;
     getClaimer?: (session: QBSession) => InstanceEntry | null;
     getCurrentSessionFile?: () => string | null;
+    getCwd?: () => string | null;
 }): {
     tryHandle: (text: string, from: QBSession) => Promise<boolean>;
 };

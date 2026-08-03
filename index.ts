@@ -218,7 +218,23 @@ export default function (pi: ExtensionAPI) {
 	/** 当前活跃 pi session 名（仅作为用户参考展示，不参与区分/路由；区分实例统一用 _instanceId） */
 	let _sessionRef: string = "";
 	/** 当前实例的 pi sessionManager 引用（#history 多实例场景：实时读当前实例 session 文件，而非全局最近 session） */
-	let _sessionManagerRef: { getSessionFile(): string | undefined } | null = null;
+	let _sessionManagerRef: { getSessionFile(): string | undefined; getCwd(): string } | null = null;
+
+	/**
+	 * QQ #new 真正执行：hack 直接调 sessionManager.newSession()。
+	 * pi 扩展 API 未暴露 newSession（仅在终端命令处理器可用），运行时对象有该方法；
+	 * 注意绕过命令流程可能状态不一致，实测有问题则回退为终端提示。
+	 */
+	function executeNewSession(): boolean {
+		const sm = _sessionManagerRef as unknown as { newSession?: (options?: unknown) => Promise<unknown> } | null;
+		if (!sm?.newSession) {
+			logError("QQ #new: 当前实例无 sessionManager 引用，无法创建新 session");
+			return false;
+		}
+		sm.newSession().catch((err) => logError(`QQ #new 执行失败: ${err}`));
+		info("QQ #new: 已调用 sessionManager.newSession()");
+		return true;
+	}
 	/** leader 持有：发送消息索引(ref_idx) → 实例 id 映射，用于引用消息定向路由 */
 	const _refIdxMap: RefIdxMap = new Map();
 	const _roleConfig = _multi.role;
@@ -451,7 +467,7 @@ export default function (pi: ExtensionAPI) {
 			_cmdHandler = createCommandHandler(leaderCmdApi, _sm, {
 				sendUserMessage: (text: string) => pi.sendUserMessage(text),
 				switchSession: () => {},
-				newSession: () => {},
+				newSession: () => executeNewSession(),
 				clearSession: () => {},
 				getSettings: () => _settings,
 				updateSettings: (update: Partial<QqSettings>) => {
@@ -468,6 +484,7 @@ export default function (pi: ExtensionAPI) {
 				injectTo: (targetId, s, c) => injectContent(targetId, s, c),
 				getClaimer: (s) => findClaimer(`${s.type}:${s.id}`),
 				getCurrentSessionFile: () => (_sessionManagerRef?.getSessionFile() ?? null),
+				getCwd: () => (_sessionManagerRef?.getCwd() ?? null),
 			});
 
 			_ws = createWsClient(_auth, {
@@ -672,7 +689,7 @@ export default function (pi: ExtensionAPI) {
 		_cmdHandler = createCommandHandler(followerApi, _sm, {
 			sendUserMessage: (text: string) => pi.sendUserMessage(text),
 			switchSession: () => {},
-			newSession: () => {},
+			newSession: () => executeNewSession(),
 			clearSession: () => {},
 			getSettings: () => _settings,
 			updateSettings: (update: Partial<QqSettings>) => {
@@ -695,6 +712,7 @@ export default function (pi: ExtensionAPI) {
 			injectTo: (targetId, s, c) => injectContent(targetId, s, c),
 			getClaimer: (s) => findClaimer(`${s.type}:${s.id}`),
 			getCurrentSessionFile: () => (_sessionManagerRef?.getSessionFile() ?? null),
+			getCwd: () => (_sessionManagerRef?.getCwd() ?? null),
 		});
 
 		tryFollower(ctx);

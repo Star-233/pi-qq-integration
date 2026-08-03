@@ -149,6 +149,21 @@ export default function (pi) {
     let _sessionRef = "";
     /** 当前实例的 pi sessionManager 引用（#history 多实例场景：实时读当前实例 session 文件，而非全局最近 session） */
     let _sessionManagerRef = null;
+    /**
+     * QQ #new 真正执行：hack 直接调 sessionManager.newSession()。
+     * pi 扩展 API 未暴露 newSession（仅在终端命令处理器可用），运行时对象有该方法；
+     * 注意绕过命令流程可能状态不一致，实测有问题则回退为终端提示。
+     */
+    function executeNewSession() {
+        const sm = _sessionManagerRef;
+        if (!sm?.newSession) {
+            logError("QQ #new: 当前实例无 sessionManager 引用，无法创建新 session");
+            return false;
+        }
+        sm.newSession().catch((err) => logError(`QQ #new 执行失败: ${err}`));
+        info("QQ #new: 已调用 sessionManager.newSession()");
+        return true;
+    }
     /** leader 持有：发送消息索引(ref_idx) → 实例 id 映射，用于引用消息定向路由 */
     const _refIdxMap = new Map();
     const _roleConfig = _multi.role;
@@ -366,7 +381,7 @@ export default function (pi) {
             _cmdHandler = createCommandHandler(leaderCmdApi, _sm, {
                 sendUserMessage: (text) => pi.sendUserMessage(text),
                 switchSession: () => { },
-                newSession: () => { },
+                newSession: () => executeNewSession(),
                 clearSession: () => { },
                 getSettings: () => _settings,
                 updateSettings: (update) => {
@@ -383,6 +398,7 @@ export default function (pi) {
                 injectTo: (targetId, s, c) => injectContent(targetId, s, c),
                 getClaimer: (s) => findClaimer(`${s.type}:${s.id}`),
                 getCurrentSessionFile: () => (_sessionManagerRef?.getSessionFile() ?? null),
+                getCwd: () => (_sessionManagerRef?.getCwd() ?? null),
             });
             _ws = createWsClient(_auth, {
                 onAuthFailed: () => {
@@ -579,7 +595,7 @@ export default function (pi) {
         _cmdHandler = createCommandHandler(followerApi, _sm, {
             sendUserMessage: (text) => pi.sendUserMessage(text),
             switchSession: () => { },
-            newSession: () => { },
+            newSession: () => executeNewSession(),
             clearSession: () => { },
             getSettings: () => _settings,
             updateSettings: (update) => {
@@ -603,6 +619,7 @@ export default function (pi) {
             injectTo: (targetId, s, c) => injectContent(targetId, s, c),
             getClaimer: (s) => findClaimer(`${s.type}:${s.id}`),
             getCurrentSessionFile: () => (_sessionManagerRef?.getSessionFile() ?? null),
+            getCwd: () => (_sessionManagerRef?.getCwd() ?? null),
         });
         tryFollower(ctx);
     }

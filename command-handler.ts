@@ -22,7 +22,7 @@ export function createCommandHandler(
   callbacks: {
     sendUserMessage: (text: string) => void;
     switchSession: (name: string) => void;
-    newSession: () => void;
+    newSession: () => boolean;
     clearSession: () => void;
     getSettings: () => QqSettings;
     updateSettings: (update: Partial<QqSettings>) => void;
@@ -35,6 +35,8 @@ export function createCommandHandler(
     getClaimer?: (session: QBSession) => InstanceEntry | null;
     // 当前实例的 pi session 文件路径（#history 多实例场景：读当前实例而非全局最近 session）
     getCurrentSessionFile?: () => string | null;
+    // 当前实例的工作目录（#sessions 只显示当前目录的 session）
+    getCwd?: () => string | null;
   }
 ) {
   /**
@@ -132,7 +134,7 @@ export function createCommandHandler(
   }
 
   async function cmdSessions(session: QBSession): Promise<void> {
-    const list = sessionManager.formatSessionList();
+    const list = sessionManager.formatSessionList(callbacks.getCwd?.() ?? undefined);
     debug(`#sessions: 返回 ${list.split("\n").length} 条`);
     await api.sendMarkdown(session, [
       "## 📋 Pi Sessions",
@@ -181,9 +183,11 @@ export function createCommandHandler(
   }
 
   async function cmdNew(session: QBSession): Promise<void> {
+    // 真正执行 newSession（index.ts 的 callbacks.newSession 直接调 sessionManager.newSession）
+    const ok = callbacks.newSession();
     await api.sendMarkdown(
       session,
-      "请在 pi 终端中输入 `/new` 创建新 session"
+      ok ? "✅ 已创建新 session" : "❌ 创建新 session 失败（当前实例无 sessionManager 引用，请在 pi 终端执行 `/new`）"
     );
   }
 

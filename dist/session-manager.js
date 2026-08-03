@@ -61,15 +61,25 @@ function extractText(msg) {
     return String(msg.text ?? "");
 }
 export function createSessionManager() {
+    /** 项目目录名是否对应当前工作目录（目录名编码：-- + 去掉开头 / 且 /→- + --，如
+     *  /home/u/.pi/a → --home-u-.pi-a--） */
+    function projectDirMatches(dirName, cwd) {
+        const encoded = `--${cwd.replace(/^\//, "").replace(/\//g, "-")}--`;
+        return dirName === encoded;
+    }
     /**
      * 列出所有 pi session。
+     * @param cwd 仅列出当前工作目录对应项目下的 session（多实例共享 sessions 目录时，避免混入其他项目）
      */
-    function listSessions() {
+    function listSessions(cwd) {
         try {
             const projects = readdirSync(SESSIONS_DIR, { withFileTypes: true });
             const sessions = [];
             for (const project of projects) {
                 if (!project.isDirectory())
+                    continue;
+                // 只显示当前目录对应的项目
+                if (cwd && !projectDirMatches(project.name, cwd))
                     continue;
                 const projectPath = join(SESSIONS_DIR, project.name);
                 const items = readdirSync(projectPath, { withFileTypes: true });
@@ -169,18 +179,60 @@ export function createSessionManager() {
         }
     }
     /**
-     * 格式化 session 列表为 Markdown
+     * 读取 session 文件的自定义名（session_info.name，/rename 设置）与最后一条用户消息。
+     * 倒序遍历：最早的 session_info.name 即最新重命名；从尾往前第一条 user 消息即最新提问。
      */
-    function formatSessionList() {
-        const sessions = listSessions();
+    function getSessionDisplay(filePath) {
+        try {
+            const raw = readFileSync(filePath, "utf-8");
+            const lines = raw.trim().split("\n");
+            let customName;
+            let lastUserMessage;
+            for (let i = lines.length - 1; i >= 0; i--) {
+                try {
+                    const parsed = JSON.parse(lines[i]);
+                    if (!customName && parsed.type === "session_info" && typeof parsed.name === "string" && parsed.name.trim()) {
+                        customName = parsed.name.trim();
+                    }
+                    if (!lastUserMessage && parsed.type === "message") {
+                        const msg = parsed.message ?? parsed;
+                        if (msg.role === "user") {
+                            const text = extractText(msg).trim();
+                            if (text)
+                                lastUserMessage = text;
+                        }
+                    }
+                    if (customName && lastUserMessage)
+                        break;
+                }
+                catch {
+                    // 跳过解析失败的行
+                }
+            }
+            return { customName, lastUserMessage };
+        }
+        catch {
+            return {};
+        }
+    }
+    /**
+     * 格式化 session 列表为 Markdown（展示自定义名优先，否则最后一条用户消息摘要）
+     */
+    function formatSessionList(cwd) {
+        const sessions = listSessions(cwd);
         if (sessions.length === 0)
             return "暂无 session";
         return sessions
             .slice(0, DEFAULTS.SESSION_LIST_LIMIT)
             .map((s, i) => {
             const ago = relativeTime(s.modifiedAt);
-            const sizeKB = (s.size / 1024).toFixed(1);
-            return `${i + 1}. **${s.name}** — ${ago} (${sizeKB} KB)`;
+            const display = getSessionDisplay(s.path);
+            const title = display.customName
+                ? `**${display.customName}**`
+                : display.lastUserMessage
+                    ? `💬 ${display.lastUserMessage.slice(0, DEFAULTS.MSG_PREVIEW_LEN)}`
+                    : s.rawName;
+            return `${i + 1}. ${title} — ${ago}`;
         })
             .join("\n");
     }
