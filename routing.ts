@@ -24,9 +24,9 @@ export type RefIdxMap = Map<string, RefIdxEntry>;
 /** ref_idx 精确路由映射有效期：与被动消息有效期一致（60 分钟） */
 export const REF_IDX_TTL_MS = 60 * 60 * 1000;
 
-/** 从引用消息内容中提取实例署名（【xxx】前缀），用于兜底路由 */
+/** 从引用消息内容中提取实例署名（【xxx】前缀，可带引用块前缀），用于兜底路由 */
 export function extractBracketName(content: string): string | null {
-	const m = content.match(/^【([^】]+)】/);
+	const m = content.match(/^(?:>\s*)?【([^】]+)】/);
 	return m ? m[1] : null;
 }
 

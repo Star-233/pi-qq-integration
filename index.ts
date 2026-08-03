@@ -302,9 +302,9 @@ export default function (pi: ExtensionAPI) {
 		}
 	}
 
-	/** 出站消息统一署名前缀：实例唯一标识（instanceId），让 QQ 用户知道消息来自哪个实例 */
+	/** 出站消息统一署名前缀：实例唯一标识（instanceId），引用块格式与正文分隔 */
 	function decorate(text: string): string {
-		return `【${_instanceId}】${text}`;
+		return `> 【${_instanceId}】\n${text}`;
 	}
 
 	// ── 引用消息定向路由（leader 持有 refIdxMap）──

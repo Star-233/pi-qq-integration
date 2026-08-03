@@ -15,10 +15,15 @@ const instances = {
 
 test("extractBracketName: 提取【】前缀", () => {
 	assert.equal(extractBracketName("【host-A-111】你好"), "host-A-111");
+	// 引用块格式：> 【id】 后接换行正文
+	assert.equal(extractBracketName("> 【host-A-111】\n内容"), "host-A-111");
+	assert.equal(extractBracketName(">【host-A-111】\n内容"), "host-A-111");
+	assert.equal(extractBracketName(">  【host-A-111】内容"), "host-A-111");
 	assert.equal(extractBracketName("【host B】x"), "host B");
 	assert.equal(extractBracketName("无前缀的消息"), null);
 	assert.equal(extractBracketName(""), null);
-	assert.equal(extractBracketName("【】"), null); // 空括号 → m[1] 为空串？实际匹配
+	assert.equal(extractBracketName("> 无前缀的消息"), null);
+	assert.equal(extractBracketName("【】"), null); // 空括号不匹配
 });
 
 test("resolveRouteInstance: ref_idx 精确映射优先", () => {
@@ -48,6 +53,11 @@ test("resolveRouteInstance: 署名兜底匹配 instanceId", () => {
 	assert.equal(
 		resolveRouteInstance({ refMsgContent: "【host-C-333】回复" }, new Map(), instances),
 		"host-C-333"
+	);
+	// 引用块格式署名同样可兜底
+	assert.equal(
+		resolveRouteInstance({ refMsgContent: "> 【host-B-222】\n回复内容" }, new Map(), instances),
+		"host-B-222"
 	);
 	// 不存在该 id → 不路由
 	assert.equal(

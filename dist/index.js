@@ -227,9 +227,9 @@ export default function (pi) {
             _ipcClient.send({ type: "instance_update", name: _sessionRef });
         }
     }
-    /** 出站消息统一署名前缀：实例唯一标识（instanceId），让 QQ 用户知道消息来自哪个实例 */
+    /** 出站消息统一署名前缀：实例唯一标识（instanceId），引用块格式与正文分隔 */
     function decorate(text) {
-        return `【${_instanceId}】${text}`;
+        return `> 【${_instanceId}】\n${text}`;
     }
     // ── 引用消息定向路由（leader 持有 refIdxMap）──
     /** 发送成功后记录 ref_idx → 实例，供用户引用该消息时定向路由 */
