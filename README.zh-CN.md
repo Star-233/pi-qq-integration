@@ -37,7 +37,7 @@ pi install npm:pi-qq-integration
 pi
 ```
 
-扩展加载后会**自动连接** QQ Bot（默认行为）。如需关闭自动连接，在配置文件加 `"autoConnect": false` 后重启 pi，再用 `/qq-connect` 手动连接；断开用 `/qq-disconnect`。
+扩展加载后，pi 会话启动时会**自动连接** QQ Bot（默认行为）。如需关闭自动连接，在配置文件加 `"autoConnect": false` 后重启 pi，再用 `/qq-connect` 手动连接；断开用 `/qq-disconnect`。
 
 现在在 QQ 中给机器人发消息，就能和 pi 对话了。
 
@@ -53,7 +53,7 @@ pi
 |------|------|------|--------|------|
 | `appId` | string | ✅ | — | QQ 开放平台机器人应用的 AppID |
 | `appSecret` | string | ✅ | — | QQ 开放平台机器人应用的 AppSecret（**敏感，勿提交 git**） |
-| `instanceId` | string | ❌ | `hostname-pid` | 多实例下本实例的唯一 ID |
+| `instanceId` | string | ❌ | `PID` | 多实例下本实例的唯一 ID（默认取进程 PID，用于 `#to <PID>` 切换与消息署名） |
 | `role` | `"auto" \| "leader" \| "follower"` | ❌ | `"auto"` | 多实例角色：`auto` 由文件锁自动选举；`leader` 强制持有 QQ 连接；`follower` 强制经 IPC 接入 leader |
 | `autoConnect` | boolean | ❌ | `true` | pi 启动时是否自动连接 QQ Bot；设为 `false` 则需手动 `/qq-connect` |
 | `allowedUsers` | string[] | ❌ | — | 允许向 pi 发 prompt 的 c2c 用户 openid 白名单。未配置则**放行所有**私聊消息（会输出安全告警）。强烈建议配置，以防远程提示词注入 |
@@ -96,11 +96,23 @@ pi
 
 ### 多实例
 
-同时运行多个 pi 实例时，用文件锁选举唯一的 **leader** 持有 QQ 连接；其余实例作为 **follower** 经本地 Unix socket IPC 把 QQ 收发委托给 leader。
+同时运行多个 pi 实例时，用文件锁选举唯一的 **leader** 持有 QQ 连接；其余实例作为 **follower** 经本地 IPC 把 QQ 收发委托给 leader（macOS/Linux 用 Unix socket，Windows 用命名管道）。
 
 - `role: "auto"`（默认）：谁先抢到锁谁是 leader，其余自动成为 follower。
-- `role: "leader"` / `"follower"`：强制角色。
-- `instanceId`：一般无需修改；仅在需要固定 ID 时设置。
+- `role: "leader"` / `"follower"`：强制角色。`follower` 即使 leader 宕机也**不会**尝试接管成为 leader。
+- `instanceId`：默认即进程 PID，同时作为实例署名与 `#to <PID>` 定向路由的标识；仅在需要固定 ID 时手动设置。
+
+**消息署名** — 所有发往 QQ 的消息都会带一段引用块署名，标明消息来自哪个实例：
+
+```
+> 【session名-3863】
+
+<消息内容>
+```
+
+（session 名为当前 pi session 名；未命名时署名为 `> 【PID】`。）该署名同时是引用消息路由的兜底依据（见下）。
+
+**引用消息定向路由** — 在 QQ 中**引用（回复）某条消息**时，消息会自动路由回发送被引用消息的那个实例（基于 `ref_idx` 映射，60 分钟 TTL；未命中时按被引用内容中的署名唯一匹配兜底）。也就是说，**想给某个特定实例发消息，直接引用它之前发的消息回复即可**。
 
 ---
 
@@ -157,13 +169,15 @@ QQ 用户
 | 命令 | 说明 |
 |------|------|
 | `#help` | 显示帮助 |
-| `#sessions` | 列出所有 pi session |
+| `#sessions` | 列出最近 pi session（最多 20 个） |
 | `#resume <序号/名称>` | 切换到指定 session |
 | `#new` | 创建新 session |
 | `#history [N]` | 查看最近活跃 session 的最近 N 条消息（默认 5） |
 | `#clear` | 压缩当前 session |
 | `#target` | 将当前 QQ 会话设为默认转发目标 |
 | `#settings` | 查看/修改转发设置（`#setting` 为别名） |
+| `#instances` | 列出在线实例（实例 ID、pi session 名、角色、认领会话数） |
+| `#to <PID/名称> [内容]` | 查看当前绑定实例 / 切换会话到指定实例 / 向指定实例定向发送内容 |
 
 ### 桌面端消息转发
 
@@ -212,8 +226,10 @@ pi-qq-integration/
 ├── lock.ts               # 文件锁（O_EXCL 原子创建）
 ├── ws-client.ts          # WebSocket 客户端
 ├── api-client.ts         # REST API 客户端
-├── ipc.ts                # Unix socket IPC
+├── ipc.ts                # IPC（leader-follower 委派；Unix socket / Windows 命名管道）
 ├── registry.ts           # 实例注册表（原子写入）
+├── routing.ts            # 引用消息路由纯函数（ref_idx + 署名兜底）
+├── validation.ts         # session/sessionKey 校验、参考名清洗
 ├── session-manager.ts    # Session 浏览
 ├── command-handler.ts    # #命令解析
 ├── logger.ts             # 文件日志（自动截断）
@@ -232,12 +248,13 @@ pi-qq-integration/
 └── qq-integration/
     ├── registry.json             # 实例注册表（原子写入）
     └── instances/
-        └── <pid>.sock            # IPC Unix socket（leader）
+        └── <pid>.sock            # IPC Unix socket（leader；Windows 为命名管道）
 ```
 
 - 第一个实例获取锁 → 成为 leader → 连接 QQ Bot
 - 后续实例检测到锁 → 成为 follower → 通过 IPC 连接 leader
-- leader 崩溃后 PID 失效 → 下一个实例自动接管
+- leader 崩溃或退出后 PID 失效 → follower 在重连循环中自动接管锁升级为 leader（故障转移）；`role: follower` 强制跟随时不升级
+- leader 宕机期间 follower **静默**重试（仅写日志，不刷 UI 提示），连接恢复时才通知
 
 ---
 
@@ -250,7 +267,7 @@ pi-qq-integration/
 ## 注意事项
 
 1. **Token 安全** — Token 有效期约 2 小时，自动刷新。连续 3 次刷新失败后自动断开并通知。
-2. **消息频率** — 主动消息每月每用户/群限 4 条，被动回复较宽松。
+2. **消息频率** — 主动消息每月每用户/群限 4 条（QQ 官方平台限制），被动回复较宽松。
 3. **Session 管理** — session 切换需在 pi 终端操作。
 4. **设置持久化** — `#settings` 变更保存到配置文件，`/reload` 不丢失。
 5. **群聊消息** — 仅接收 @机器人的消息。
@@ -265,8 +282,11 @@ cd ~/.pi/agent/extensions/pi-qq-integration
 npm install          # 安装依赖
 npm run build        # 编译 TypeScript
 npm run typecheck    # 仅类型检查
+npm test             # 运行测试套件（node:test，无额外开发依赖）
 # 编辑代码后在 pi 中 /reload 热重载
 ```
+
+**依赖** — 唯一的运行时第三方依赖是 [`ws`](https://www.npmjs.com/package/ws)（WebSocket 客户端，用于 `ws-client.ts`），其余全部使用 Node.js 内置模块。
 
 ---
 

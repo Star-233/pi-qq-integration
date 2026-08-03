@@ -37,7 +37,7 @@ Create `~/.pi/agent/qq-integration-config.json`:
 pi
 ```
 
-The extension loads and **automatically connects** to QQ Bot by default. To disable auto-connect, add `"autoConnect": false` to the config file and use `/qq-connect` manually. Send a message to your bot in QQ — it'll be forwarded to pi as a prompt.
+The extension loads on pi startup and **automatically connects** to QQ Bot when a pi session starts. To disable auto-connect, add `"autoConnect": false` to the config file and use `/qq-connect` manually. Send a message to your bot in QQ — it'll be forwarded to pi as a prompt.
 
 ---
 
@@ -51,7 +51,7 @@ Config file path: `~/.pi/agent/qq-integration-config.json`
 |-------|------|----------|---------|-------------|
 | `appId` | string | ✅ | — | QQ Bot application AppID |
 | `appSecret` | string | ✅ | — | QQ Bot application AppSecret (**sensitive — never commit to git**) |
-| `instanceId` | string | ❌ | `hostname-pid` | Unique ID for this pi instance (used in multi-instance registry) |
+| `instanceId` | string | ❌ | `PID` | Unique ID for this pi instance (default = `process.pid`; used for `#to <PID>` switching and message signatures) |
 | `role` | `"auto" \| "leader" \| "follower"` | ❌ | `"auto"` | Multi-instance role: `auto` = file-lock election; `leader` = force QQ connection holder; `follower` = connect via IPC to leader |
 | `autoConnect` | boolean | ❌ | `true` | Auto-connect QQ Bot on pi startup; set `false` to require manual `/qq-connect` |
 | `allowedUsers` | string[] | ❌ | — | Whitelist of c2c user openids allowed to send prompts to pi. If unset, **all** QQ private messages are processed (with a security warning). Strongly recommended to prevent remote prompt injection |
@@ -94,11 +94,23 @@ Config file path: `~/.pi/agent/qq-integration-config.json`
 
 ### Multi-instance
 
-When running multiple pi instances simultaneously, a file-lock elects a single **leader** to hold the QQ WebSocket connection. Other instances become **followers** and delegate QQ send/receive to the leader via local Unix socket IPC.
+When running multiple pi instances simultaneously, a file-lock elects a single **leader** to hold the QQ WebSocket connection. Other instances become **followers** and delegate QQ send/receive to the leader via local IPC (Unix socket on macOS/Linux, named pipe on Windows).
 
 - `role: "auto"` (default) — first instance to acquire the lock becomes leader; rest become followers.
-- `role: "leader"` / `"follower"` — force a specific role.
-- `instanceId` — usually unnecessary; set only for fixed IDs in logs/registry.
+- `role: "leader"` / `"follower"` — force a specific role. `follower` never attempts to take over leadership even if the leader is down.
+- `instanceId` — default is the process PID; used as the instance signature and the `#to <PID>` routing target. Set it only when you need a fixed ID.
+
+**Message signatures** — every outgoing QQ message is prefixed with a quote-block signature showing which instance sent it:
+
+```
+> 【session-name-3863】
+
+<message content>
+```
+
+(The session name is your pi session name; if the session is unnamed, the signature is `> 【PID】`.) The signature is also used as a fallback for quote-based routing (see below).
+
+**Quote-based routing** — when you **quote (reply to) a message** in QQ, the message is automatically routed back to the instance that sent the quoted message (via `ref_idx` mapping, 60-min TTL; falls back to matching the signature inside the quoted content). This lets you send a message to a specific instance by quoting one of its replies.
 
 ---
 
@@ -158,13 +170,17 @@ Messages sent in QQ that start with `#` are treated as commands. Anything else i
 | Command | Description |
 |---------|-------------|
 | `#help` | Show help |
-| `#sessions` | List all pi sessions |
+| `#sessions` | List recent pi sessions (up to 20) |
 | `#resume <index/name>` | Switch to a session (operates in terminal) |
 | `#new` | Create a new session (operates in terminal) |
 | `#history [N]` | View last N messages in the most recently active session (default: 5) |
 | `#clear` | Compact current session (operates in terminal) |
 | `#target` | Set current QQ conversation as default forwarding target |
 | `#settings` | View/modify forwarding settings (`#setting` is an alias) |
+| `#instances` | List online instances (ID, pi session name, role, claimed sessions) |
+| `#to <PID/name> [content]` | View current binding / switch the session to a specific instance / send content directly to it |
+
+> `#settings` uses short aliases for two options: `forwardMessages` = `forwardDesktopMessages`, `forwardTools` = `forwardToolCalls`.
 
 ### `#settings` examples
 
@@ -218,8 +234,10 @@ pi-qq-integration/
 ├── lock.ts               # File lock (O_EXCL atomic creation, multi-instance)
 ├── ws-client.ts          # WebSocket client (connect, auth, heartbeat, reconnect)
 ├── api-client.ts         # REST API client (send messages)
-├── ipc.ts                # Unix socket IPC (leader-follower delegation)
+├── ipc.ts                # IPC (leader-follower delegation; Unix socket / Windows pipe)
 ├── registry.ts           # Instance registry (atomic writes)
+├── routing.ts            # Quote-based routing pure functions (ref_idx + signature fallback)
+├── validation.ts         # Session/sessionKey validation, name sanitization
 ├── session-manager.ts    # Pi session browser
 ├── command-handler.ts    # QQ #command parser
 ├── logger.ts             # File logger with rotation
@@ -238,12 +256,13 @@ pi-qq-integration/
 └── qq-integration/
     ├── registry.json             # Instance registry (atomic write)
     └── instances/
-        └── <pid>.sock            # IPC Unix socket (leader)
+        └── <pid>.sock            # IPC Unix socket (leader; named pipe on Windows)
 ```
 
 - First pi instance acquires the lock → becomes leader → connects QQ Bot
 - Subsequent instances detect the lock → become followers → connect to leader via IPC
-- If the leader crashes, its PID becomes invalid → next instance takes over the lock
+- If the leader crashes or exits, its PID becomes invalid → the next follower takes over the lock during its reconnect cycle (failover). `role: follower` disables this takeover
+- While the leader is down, followers **silently** retry in the background (logs only, no UI spam); they notify you only when the connection is restored
 
 ---
 
@@ -262,7 +281,7 @@ Use `/qq-logs` in pi to view the last 30 entries, or `/qq-logs-path` for the fil
 ## Notes
 
 1. **Token security** — Access tokens expire in ~2 hours and are auto-refreshed. After 3 consecutive refresh failures, the extension disconnects and notifies the user.
-2. **Message rate limits** — QQ Bot proactive messages are limited to 4 per user/group per month. Passive replies have more relaxed limits.
+2. **Message rate limits** — QQ Bot proactive messages are limited to 4 per user/group per month (QQ platform rule). Passive replies have more relaxed limits.
 3. **Session management** — Session switching (`/new`, `/resume`) must be done in the pi terminal.
 4. **Settings persistence** — `#settings` changes are saved to `qq-integration-config.json` and survive `/reload`.
 5. **Group messages** — Only @-bot messages are received (`GROUP_AT_MESSAGE_CREATE`).
@@ -277,8 +296,11 @@ cd ~/.pi/agent/extensions/pi-qq-integration
 npm install          # Install dependencies
 npm run build        # Compile TypeScript
 npm run typecheck    # Type check only
+npm test             # Run the test suite (node:test, zero extra dev deps)
 # Edit code, then /reload in pi to hot-reload
 ```
+
+**Dependencies** — the only runtime dependency is [`ws`](https://www.npmjs.com/package/ws) (WebSocket client, used by `ws-client.ts`). Everything else uses Node.js built-ins.
 
 ---
 

@@ -1,7 +1,7 @@
 ## 测试体系
 
 - 新增 `npm test`（`node --test`，零第三方依赖，Node ≥ 20 内置测试框架）
-- `test/` 目录 5 个测试文件、38 个用例：
+- `test/` 目录 5 个测试文件、39 个用例：
   - `validation.test.mjs` — session 结构/sessionKey/参考名清洗校验
   - `routing.test.mjs` — ref_idx 精确路由、署名兜底、#to 解析（纯函数，依赖注入）
   - `lock.test.mjs` — 文件锁互斥/死亡接管/同 PID 恢复/心跳（临时目录 + 子进程）
@@ -14,11 +14,12 @@
 **新功能：多实例消息来源标识 + 定向回复路由**
 
 ### 新增
-- **出站消息统一署名**：所有发往 QQ 的消息自动加 `【instanceId】` 前缀，用户可一眼辨别消息来自哪个 pi 实例
+- **出站消息统一署名**：所有发往 QQ 的消息自动加 `> 【session名-PID】` 引用块署名（署名行与正文以空行分隔），用户可一眼辨别消息来自哪个 pi 实例
 - **标识统一**：实例内部唯一标识默认 = PID（`#to <PID>` 切换，去掉了 hostname）；**出站署名显示 `> 【session名-PID】`**（未命名 session 时 `> 【PID】`），引用路由按署名尾部 PID 兜底匹配
 - **leader 故障转移**：follower 重连循环中定期尝试接管锁（`lock.acquire`，检测旧 leader PID 死亡/锁释放），成功后自动升级为新 leader，避免 leader 退出后 follower 无限重连；配置 `role: follower` 强制跟随时不升级
-- **实例显示名 = 当前活跃 pi session 名**：自动取 pi session 名（`/rename` 可自定义），回退 hostname/instanceId；session 切换或重命名时自动同步到注册表
-- **引用消息定向路由**：用户在 QQ 中「引用」某条消息回复时，按被引用消息的来源实例精确路由（基于 `ref_idx` 映射，60 分钟 TTL）；映射未命中时按消息署名兜底匹配
+- **follower 静默重连**：与 leader 断开后仅写日志、不刷 UI 提示（与 leader 侧 QQ WS 静默重连一致），连接成功才通知；重连前先尝试接管锁升级
+- **实例显示名 = 当前活跃 pi session 名**：自动取 pi session 名（`/rename` 可自定义）；session 切换或重命名时自动同步到注册表（未命名 session 时署名回退为 `> 【PID】`，无 hostname 回退）
+- **引用消息定向路由**：用户在 QQ 中「引用」某条消息回复时，按被引用消息的来源实例精确路由（基于 `ref_idx` 映射，60 分钟 TTL）；映射未命中时按消息署名唯一匹配兜底
 - **`#to <实例> [内容]` 命令**：查看当前会话绑定实例 / 切换会话到指定实例 / 定向发送内容；支持含空格的实例名（最长前缀匹配），重名时提示使用 instanceId
 - **`#instances` 命令**：列出所有在线实例（显示名/角色/认领会话数）
 - 群聊（GROUP_AT_MESSAGE_CREATE）同样支持引用消息解析（需实测确认）
@@ -28,9 +29,9 @@
 - 安全：IPC 新增端点（inject/reroute/instance_update）全量结构校验 + 权限约束（inject 仅合法实例、reroute 仅当前 claimer）
 - 安全：register 连接级唯一性校验（防伪造实例条目/身份接管）
 - 安全：引用署名兜底改为唯一匹配 + 校验被引用消息确为机器人所发（防消息定向劫持）
-- 安全：实例名自动唯一化（重名加后缀，防署名冒用/定向歧义）
+- 安全：session 名重名时路由拒绝（唯一匹配才命中，防定向歧义；实例内部标识为 PID，天然唯一）
 - 安全：isAllowed 未知会话类型一律拒绝（防伪造类型绕过白名单）
-- 安全：`#instances` 输出脱敏（不再暴露 instanceId/主机名/PID）
+- 安全：`#instances` 展示 instanceId（默认即 PID，供 `#to` 定向），不再暴露主机名
 - 加固：显示名清洗（去控制字符/限长）、markdown 转义增强、refIdxMap 硬上限驱逐、leader 命令回复也记录 ref_idx
 
 ### 已知限制
