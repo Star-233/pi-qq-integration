@@ -128,6 +128,8 @@ export default function (pi) {
     }
     info(`pi-qq-integration 扩展加载: v${EXTENSION_VERSION}`);
     const lock = createLockManager(LOCK_PATH);
+    /** 模块级 UI 引用（teardown 等无 ctx 上下文清除 footer 状态用） */
+    let uiRef = null;
     let _ws = null;
     let _auth = null;
     let _api = null;
@@ -155,8 +157,10 @@ export default function (pi) {
     let _followerRetryTimer = null;
     /** follower 重连延迟（指数退避） */
     let _followerRetryDelay = DEFAULTS.FOLLOWER_RETRY_MS;
-    /** 已通知过"与 leader 断开"（避免 error+close 双触发及重连循环刷屏，连接恢复时重置） */
-    let _leaderDisconnectNotified = false;
+    /** follower 重连尝试次数（用于 footer 状态展示） */
+    let _followerRetryCount = 0;
+    /** footer 状态栏 key：follower 重连状态（恢复时清除，避免聊天区挂起永久提示） */
+    const FOLLOWER_STATUS_KEY = "qq-follower";
     // ── 连接/断开 ──
     // ── 连接/断开（多实例：leader 持 QQ 连接，follower 经 IPC 委派）──
     // Windows 上 node:net 的 IPC 走命名管道，路径必须形如 \\.\pipe\... 或 \\?\pipe\...
@@ -166,6 +170,7 @@ export default function (pi) {
         ? `\\.\pipe\pi-qq-${process.pid}`
         : `${PATHS.INSTANCE_SOCK_DIR}/${process.pid}.sock`;
     async function connect(ctx) {
+        uiRef = ctx.ui;
         if (_role) {
             ctx.ui.notify("QQ Bot: 已经连接了", "info");
             return;
@@ -577,7 +582,8 @@ export default function (pi) {
     async function becomeFollower(ctx) {
         _role = "follower";
         _followerStop = false;
-        ctx.ui.notify("QQ Bot: 作为 follower 连接 leader...", "info");
+        _followerRetryCount = 0;
+        ctx.ui.setStatus(FOLLOWER_STATUS_KEY, "🔌 QQ Bot: 作为 follower 连接 leader...");
         // follower 没有真实 QQ 连接：所有出站都经 IPC 转给 leader 代发
         const followerApi = {
             async sendMarkdown(session, markdown, replyTo, opts) {
@@ -635,23 +641,21 @@ export default function (pi) {
         }
         const sock = getLeaderSock();
         if (!sock) {
-            // 无 leader 可连：仅首次通知一次，后续重试静默
-            if (!_leaderDisconnectNotified) {
-                _leaderDisconnectNotified = true;
-                ctx.ui.notify("QQ Bot: 未找到 leader，正在重连...", "info");
-            }
+            // 无 leader 可连：footer 状态栏常驻提示（恢复后清除），不刷聊天区
+            ctx.ui.setStatus(FOLLOWER_STATUS_KEY, "🔌 QQ Bot: 未找到 leader，正在重连...");
             scheduleRetryFollower(ctx);
             return;
         }
         const client = createIpcClient(sock, {
             onConnect: () => {
-                _leaderDisconnectNotified = false; // 连接恢复，重置去重标志
+                _followerRetryCount = 0;
+                _followerRetryDelay = DEFAULTS.FOLLOWER_RETRY_MS; // 重置退避
+                ctx.ui.setStatus(FOLLOWER_STATUS_KEY, undefined); // 清除重连状态
                 client.send({ type: "register", entry: selfEntry("follower") });
                 // 同步 leader 的 settings 状态
                 client.send({ type: "settings_request" });
                 info(`已连接 leader（follower）`);
                 ctx.ui.notify("QQ Bot: 已连接 leader ✅（follower）", "info");
-                _followerRetryDelay = DEFAULTS.FOLLOWER_RETRY_MS; // 重置退避
             },
             onInbound: (msg) => {
                 handleInboundQqMessage({ session: msg.session, content: msg.content });
@@ -663,11 +667,8 @@ export default function (pi) {
             onClose: () => {
                 if (_followerStop)
                     return;
-                // 去重：只在首次断开时通知（error+close 双触发、重连循环都不再重复弹）
-                if (!_leaderDisconnectNotified) {
-                    _leaderDisconnectNotified = true;
-                    ctx.ui.notify("QQ Bot: 与 leader 断开，正在重连...", "info");
-                }
+                // 重连状态展示在 footer 状态栏（动态、可清除），不刷聊天区
+                ctx.ui.setStatus(FOLLOWER_STATUS_KEY, "🔌 QQ Bot: 与 leader 断开，正在重连...");
                 scheduleRetryFollower(ctx);
             },
         });
@@ -678,7 +679,10 @@ export default function (pi) {
             return;
         const delay = _followerRetryDelay;
         _followerRetryDelay = Math.min(delay * 2, 30_000); // 上限 30 秒
-        debug(`follower 将在 ${delay}ms 后重试`);
+        _followerRetryCount++;
+        // 更新 footer 状态：显示当前重试进度
+        ctx.ui.setStatus(FOLLOWER_STATUS_KEY, `🔌 QQ Bot: 与 leader 断开，正在重连（第 ${_followerRetryCount} 次，${delay}ms 后重试）`);
+        debug(`follower 将在 ${delay}ms 后重试（第 ${_followerRetryCount} 次）`);
         _followerRetryTimer = setTimeout(() => {
             _followerRetryTimer = null;
             if (_followerStop)
@@ -845,6 +849,11 @@ export default function (pi) {
         ctx.ui.notify("QQ Bot: 已断开 🔌", "info");
     }
     async function teardown() {
+        // 清除 footer 状态栏的 follower 重连状态（disconnect/切换角色时）
+        try {
+            uiRef?.setStatus?.(FOLLOWER_STATUS_KEY, undefined);
+        }
+        catch { /* 忽略 */ }
         if (_ws) {
             _ws.disconnect();
             _ws = null;
@@ -912,6 +921,14 @@ export default function (pi) {
             const lines = [];
             lines.push(`${lockDiag.isOwner ? "🔒" : "🔓"} **锁**: ${lockDiag.isOwner ? "持有中" : "未持有"}`);
             lines.push(`👥 **角色**: ${_role ? (_role === "leader" ? "🔑 leader（持有 QQ 连接）" : "👤 follower（经 IPC 委派）") : "未连接"}`);
+            if (_role === "follower") {
+                // follower 没有 QQ WebSocket/Token（由 leader 持有），显示真实的 IPC 连接状态
+                const ipcConnected = _ipcClient?.isConnected() ?? false;
+                lines.push(`${ipcConnected ? "🟢" : "🔴"} **IPC**: ${ipcConnected ? "已连接 leader" : "未连接 leader（重连中）"}`);
+                lines.push("ℹ️ QQ WebSocket/Token 由 leader 实例持有");
+                ctx.ui.notify(lines.join("\n"), "info");
+                return;
+            }
             if (wsDiag) {
                 lines.push(`${wsDiag.connected ? "🟢" : "🔴"} **WebSocket**: ${stateLabel(wsDiag.state)}`);
                 if (wsDiag.uptimeMs !== null)
@@ -948,7 +965,13 @@ export default function (pi) {
             lines.push(`- 心跳活跃: ${lockDiag.heartbeatActive ? "✅" : "❌"}`);
             lines.push("");
             lines.push("**🌐 WebSocket 连接**");
-            if (wsDiag) {
+            if (_role === "follower") {
+                // follower 无 WS（由 leader 持有），显示 IPC 连接状态
+                const ipcConnected = _ipcClient?.isConnected() ?? false;
+                lines.push(`- IPC 到 leader: ${ipcConnected ? "🟢 已连接" : "🔴 未连接（重连中）"}`);
+                lines.push("- QQ WebSocket/Token 由 leader 实例持有（本实例经 IPC 委派）");
+            }
+            else if (wsDiag) {
                 lines.push(`- 状态: ${stateLabel(wsDiag.state)}`);
                 lines.push(`- Session ID: ${wsDiag.sessionId ?? "(无)"}`);
                 lines.push(`- 序列号: ${wsDiag.sequenceNumber}`);
@@ -1212,6 +1235,7 @@ export default function (pi) {
         }
     });
     pi.on("session_shutdown", async () => {
+        uiRef = null;
         await teardown();
     });
 }
