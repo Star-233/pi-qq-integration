@@ -668,6 +668,38 @@ export default function (pi) {
         });
         _ipcClient = client;
     }
+    /** follower 重连时尝试接管锁升级为 leader（旧 leader 退出/死亡时）；配置强制 follower 不升级 */
+    async function maybeTakeoverLeader(ctx) {
+        if (_followerStop)
+            return;
+        if (_roleConfig === "follower") {
+            // 配置强制 follower：不参与选主，继续重连等待 leader 恢复
+            tryFollower(ctx);
+            return;
+        }
+        const isOwner = await lock.acquire();
+        if (!isOwner) {
+            // leader 还活着（PID 存活且持锁）→ 继续作为 follower 重连
+            tryFollower(ctx);
+            return;
+        }
+        // 拿到锁：旧 leader 已退出/死亡，本实例接管成为新 leader
+        _followerStop = true;
+        if (_followerRetryTimer) {
+            clearTimeout(_followerRetryTimer);
+            _followerRetryTimer = null;
+        }
+        if (_ipcClient) {
+            try {
+                _ipcClient.close();
+            }
+            catch { /* 忽略已断开的 client */ }
+            _ipcClient = null;
+        }
+        info("旧 leader 已退出，本实例接管锁成为新 leader");
+        ctx.ui.notify("QQ Bot: 旧 leader 已退出，本实例接管成为 leader 🆕", "info");
+        await becomeLeader(ctx);
+    }
     function scheduleRetryFollower(ctx) {
         if (_followerStop || _followerRetryTimer)
             return;
@@ -679,7 +711,8 @@ export default function (pi) {
             _followerRetryTimer = null;
             if (_followerStop)
                 return;
-            tryFollower(ctx);
+            // 重连前先尝试接管锁：旧 leader 退出/死亡时升级为 leader，避免无限重连
+            maybeTakeoverLeader(ctx).catch((err) => logError(`接管锁失败: ${err}`));
         }, delay);
     }
     async function sendToQq(target, content, replyTo, opts) {
