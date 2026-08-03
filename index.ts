@@ -184,8 +184,6 @@ export default function (pi: ExtensionAPI) {
 	info(`pi-qq-integration 扩展加载: v${EXTENSION_VERSION}`);
 
 	const lock = createLockManager(LOCK_PATH);
-	/** 模块级 UI 引用（teardown 等无 ctx 上下文清除 footer 状态用） */
-	let uiRef: Pick<ExtensionUIContext, "setStatus" | "notify"> | null = null;
 	let _ws: WsClient | null = null;
 	let _auth: AuthManager | null = null;
 	let _api: ApiClient | null = null;
@@ -217,10 +215,8 @@ export default function (pi: ExtensionAPI) {
 	let _followerRetryTimer: ReturnType<typeof setTimeout> | null = null;
 	/** follower 重连延迟（指数退避） */
 	let _followerRetryDelay: number = DEFAULTS.FOLLOWER_RETRY_MS;
-	/** follower 重连尝试次数（用于 footer 状态展示） */
+	/** follower 重连尝试次数（仅日志用） */
 	let _followerRetryCount = 0;
-	/** footer 状态栏 key：follower 重连状态（恢复时清除，避免聊天区挂起永久提示） */
-	const FOLLOWER_STATUS_KEY = "qq-follower";
 
 	// ── 连接/断开 ──
 
@@ -235,7 +231,6 @@ export default function (pi: ExtensionAPI) {
 			: `${PATHS.INSTANCE_SOCK_DIR}/${process.pid}.sock`;
 
 	async function connect(ctx: ExtensionContext): Promise<void> {
-		uiRef = ctx.ui;
 		if (_role) {
 			ctx.ui.notify("QQ Bot: 已经连接了", "info");
 			return;
@@ -656,7 +651,7 @@ export default function (pi: ExtensionAPI) {
 		_role = "follower";
 		_followerStop = false;
 		_followerRetryCount = 0;
-		ctx.ui.setStatus(FOLLOWER_STATUS_KEY, "🔌 QQ Bot: 作为 follower 连接 leader...");
+		ctx.ui.notify("QQ Bot: 作为 follower 连接 leader...", "info");
 
 		// follower 没有真实 QQ 连接：所有出站都经 IPC 转给 leader 代发
 		const followerApi: ApiClient = {
@@ -718,8 +713,8 @@ export default function (pi: ExtensionAPI) {
 		}
 		const sock = getLeaderSock();
 		if (!sock) {
-			// 无 leader 可连：footer 状态栏常驻提示（恢复后清除），不刷聊天区
-			ctx.ui.setStatus(FOLLOWER_STATUS_KEY, "🔌 QQ Bot: 未找到 leader，正在重连...");
+			// 无 leader 可连：静默重试（与 leader 侧 WS 静默重连行为一致，不刷聊天区）
+			info("未找到 leader，进入重连等待");
 			scheduleRetryFollower(ctx);
 			return;
 		}
@@ -727,7 +722,6 @@ export default function (pi: ExtensionAPI) {
 			onConnect: () => {
 				_followerRetryCount = 0;
 				_followerRetryDelay = DEFAULTS.FOLLOWER_RETRY_MS; // 重置退避
-				ctx.ui.setStatus(FOLLOWER_STATUS_KEY, undefined); // 清除重连状态
 				client.send({ type: "register", entry: selfEntry("follower") });
 				// 同步 leader 的 settings 状态
 				client.send({ type: "settings_request" });
@@ -743,8 +737,8 @@ export default function (pi: ExtensionAPI) {
 			},
 			onClose: () => {
 				if (_followerStop) return;
-				// 重连状态展示在 footer 状态栏（动态、可清除），不刷聊天区
-				ctx.ui.setStatus(FOLLOWER_STATUS_KEY, "🔌 QQ Bot: 与 leader 断开，正在重连...");
+				// 静默重连（与 leader 侧 WS 断开重连一致）：仅日志，连接恢复时通知成功
+				info("与 leader 断开，进入重连等待");
 				scheduleRetryFollower(ctx);
 			},
 		});
@@ -756,11 +750,6 @@ export default function (pi: ExtensionAPI) {
 		const delay = _followerRetryDelay;
 		_followerRetryDelay = Math.min(delay * 2, 30_000); // 上限 30 秒
 		_followerRetryCount++;
-		// 更新 footer 状态：显示当前重试进度
-		ctx.ui.setStatus(
-			FOLLOWER_STATUS_KEY,
-			`🔌 QQ Bot: 与 leader 断开，正在重连（第 ${_followerRetryCount} 次，${delay}ms 后重试）`
-		);
 		debug(`follower 将在 ${delay}ms 后重试（第 ${_followerRetryCount} 次）`);
 		_followerRetryTimer = setTimeout(() => {
 			_followerRetryTimer = null;
@@ -921,10 +910,6 @@ async function disconnect(ctx: ExtensionContext): Promise<void> {
 	}
 
 	async function teardown(): Promise<void> {
-		// 清除 footer 状态栏的 follower 重连状态（disconnect/切换角色时）
-		try {
-			uiRef?.setStatus?.(FOLLOWER_STATUS_KEY, undefined);
-		} catch { /* 忽略 */ }
 		if (_ws) {
 			_ws.disconnect();
 			_ws = null;
@@ -1373,7 +1358,6 @@ async function disconnect(ctx: ExtensionContext): Promise<void> {
 	});
 
 	pi.on("session_shutdown", async () => {
-		uiRef = null;
 		await teardown();
 	});
 }
