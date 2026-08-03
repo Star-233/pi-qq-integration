@@ -32,13 +32,11 @@ export function createCommandHandler(api, sessionManager, callbacks) {
                 await cmdSessions(from, args);
                 return true;
             case "resume":
-                await cmdResume(from, args);
-                return true;
             case "new":
-                await cmdNew(from);
-                return true;
             case "clear":
-                await cmdClear(from);
+                // 已移除：#create <序号/名称> 可创建复用指定 session 的新实例，
+                // #create new 可创建全新 session 的实例，原 hack 命令不再需要
+                await api.sendMarkdown(from, `\`#${cmd}\` 已移除。用 \`#create <序号/名称>\` 创建复用指定 session 的新实例，\`#create new [--dir <目录>]\` 创建全新 session 的实例。`);
                 return true;
             case "history":
                 await cmdHistory(from, args);
@@ -74,9 +72,6 @@ export function createCommandHandler(api, sessionManager, callbacks) {
             "|------|------|",
             "| `#help` | 显示此帮助 |",
             "| `#sessions [页码]` | 列出全部 session（按最近使用排序，每页 10 条）|",
-            "| `#resume <序号/名称>` | 切换到指定 session（支持序号或名称匹配）|",
-            "| `#new` | 创建新 session |",
-            "| `#clear` | 清空当前 session |",
             "| `#history [N]` | 查看最近 N 条消息 (默认 5) |",
             "| `#settings` | 查看/修改转发设置 |",
             "| `#target` | 将当前 QQ 会话设为默认转发目标 |",
@@ -102,7 +97,7 @@ export function createCommandHandler(api, sessionManager, callbacks) {
             "",
             `共 ${total} 条 · 第 ${page}/${totalPages} 页 · 用 \`#sessions <页码>\` 翻页`,
             "",
-            "`#resume <序号>` 切换 · `#create <序号>` 用该 session 创建新实例",
+            "`#create <序号>` 用该 session 创建新实例",
         ].join("\n"));
     }
     /** 按序号或名称/路径匹配 session（与 #sessions 全量列表一致） */
@@ -121,27 +116,6 @@ export function createCommandHandler(api, sessionManager, callbacks) {
         if (p.startsWith("~/"))
             return `${homedir()}${p.slice(1)}`;
         return p;
-    }
-    async function cmdResume(session, arg) {
-        if (!arg) {
-            await api.sendText(session, "用法: `#resume <序号|名称>`");
-            return;
-        }
-        const match = resolveSession(arg, sessionManager.listSessions());
-        if (!match) {
-            await api.sendMarkdown(session, `Session \`${esc(arg)}\` 不存在。用 \`#sessions\` 查看所有可用 session。`);
-            return;
-        }
-        // 真正执行切换（index.ts 的 callbacks.switchSession 直接调 sessionManager.setSessionFile）
-        const ok = callbacks.switchSession(match.path);
-        await api.sendMarkdown(session, ok
-            ? `✅ 已切换到 session \`${esc(match.rawName)}\``
-            : `❌ 切换失败（当前实例无 sessionManager 引用，请在 pi 终端执行 \`/resume ${esc(match.rawName)}\`）`);
-    }
-    async function cmdNew(session) {
-        // 真正执行 newSession（index.ts 的 callbacks.newSession 直接调 sessionManager.newSession）
-        const ok = callbacks.newSession();
-        await api.sendMarkdown(session, ok ? "✅ 已创建新 session" : "❌ 创建新 session 失败（当前实例无 sessionManager 引用，请在 pi 终端执行 `/new`）");
     }
     /** #create 结果回复 */
     async function replySpawnResult(session, result, label) {
@@ -217,9 +191,6 @@ export function createCommandHandler(api, sessionManager, callbacks) {
             return;
         }
         await api.sendMarkdown(session, `✅ 实例 **${pid}** 已关闭`);
-    }
-    async function cmdClear(session) {
-        await api.sendText(session, "请在 pi 终端中输入 `/compact` 压缩对话");
     }
     async function cmdHistory(session, arg) {
         // 从当前 session 名读取

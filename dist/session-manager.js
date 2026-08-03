@@ -296,7 +296,7 @@ export function createSessionManager() {
     }
     /**
      * 分页格式化**全部** session（跨项目，按 mtime 降序）。
-     * 序号为全局序号（跨页连续），可直接用于 #resume / #create。
+     * 序号为全局序号（跨页连续），可直接用于 #create。
      */
     function formatSessionListPage(opts) {
         const sessions = listSessions();

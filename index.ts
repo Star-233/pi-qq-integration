@@ -223,47 +223,6 @@ export default function (pi: ExtensionAPI) {
 	/** 当前实例的 pi sessionManager 引用（#history 多实例场景：实时读当前实例 session 文件，而非全局最近 session） */
 	let _sessionManagerRef: { getSessionFile(): string | undefined; getCwd(): string } | null = null;
 
-	/**
-	 * QQ #new 真正执行：hack 直接调 sessionManager.newSession()。
-	 * pi 扩展 API 未暴露 newSession（仅在终端命令处理器可用），运行时对象有该方法
-	 * （同步方法，返回新 session 文件路径）；注意绕过命令流程可能状态不一致，实测有问题则回退。
-	 */
-	function executeNewSession(): boolean {
-		const sm = _sessionManagerRef as unknown as { newSession?: (options?: unknown) => string } | null;
-		if (!sm?.newSession) {
-			logError("QQ #new: 当前实例无 sessionManager 引用，无法创建新 session");
-			return false;
-		}
-		try {
-			const newFile = sm.newSession();
-			info(`QQ #new: 已创建新 session → ${newFile}`);
-			return true;
-		} catch (err) {
-			logError(`QQ #new 执行失败: ${err}`);
-			return false;
-		}
-	}
-
-	/**
-	 * QQ #resume 真正执行：hack 直接调 sessionManager.setSessionFile(path)。
-	 * 同样绕过命令流程（agent 内存上下文不会加载目标 session 历史），实测有问题则回退。
-	 */
-	function executeSwitchSession(path: string): boolean {
-		const sm = _sessionManagerRef as unknown as { setSessionFile?: (p: string) => void } | null;
-		if (!sm?.setSessionFile) {
-			logError("QQ #resume: 当前实例无 sessionManager 引用，无法切换 session");
-			return false;
-		}
-		try {
-			sm.setSessionFile(path);
-			info(`QQ #resume: 已切换到 session → ${path}`);
-			return true;
-		} catch (err) {
-			logError(`QQ #resume 执行失败: ${err}`);
-			return false;
-		}
-	}
-
 	// ── 实例生命周期（#create / #close）──
 
 	/** shell 单引号转义（spawn 的 sh -c 命令里包裹路径） */
@@ -625,9 +584,6 @@ export default function (pi: ExtensionAPI) {
 			};
 			_cmdHandler = createCommandHandler(leaderCmdApi, _sm, {
 				sendUserMessage: (text: string) => pi.sendUserMessage(text),
-				switchSession: (path) => executeSwitchSession(path),
-				newSession: () => executeNewSession(),
-				clearSession: () => {},
 				getSettings: () => _settings,
 				updateSettings: (update: Partial<QqSettings>) => {
 					_settings = { ..._settings, ...update };
@@ -849,9 +805,6 @@ export default function (pi: ExtensionAPI) {
 		_sm = createSessionManager();
 		_cmdHandler = createCommandHandler(followerApi, _sm, {
 			sendUserMessage: (text: string) => pi.sendUserMessage(text),
-			switchSession: (path) => executeSwitchSession(path),
-			newSession: () => executeNewSession(),
-			clearSession: () => {},
 			getSettings: () => _settings,
 			updateSettings: (update: Partial<QqSettings>) => {
 				// follower 不直接修改，而是通过 IPC 请求 leader 执行变更后广播
