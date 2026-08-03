@@ -25,6 +25,12 @@ export declare const DEFAULTS: {
     readonly LOG_MAX_BUFFER: 200;
     readonly INTENTS: number;
     readonly SESSION_LIST_LIMIT: 20;
+    /** #sessions 分页：每页条数 */
+    readonly SESSION_PAGE_SIZE: 10;
+    /** #create spawn 新实例后等待其注册到 registry 的超时（ms） */
+    readonly SPAWN_WAIT_MS: 15000;
+    /** #close 发送 SIGTERM 后等待进程退出的时长（ms），超时则 SIGKILL */
+    readonly INSTANCE_CLOSE_WAIT_MS: 5000;
     readonly HISTORY_DEFAULT: 5;
     readonly MSG_PREVIEW_LEN: 300;
     readonly CONTENT_PREVIEW_LEN: 100;

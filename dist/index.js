@@ -12,6 +12,9 @@ import { resolveRouteInstance, resolveInstanceByName, REF_IDX_TTL_MS, } from "./
 import { isValidSession, isValidSessionKey, sanitizeDisplayName, } from "./validation.js";
 import { error as logError, info, warn, debug, readRecentLines, getLogPath, clearLog, } from "./logger.js";
 import { createRequire } from "node:module";
+import { spawn } from "node:child_process";
+import { openSync, mkdirSync, existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { PATHS, DEFAULTS, sessionTag } from "./constants.js";
 const require = createRequire(import.meta.url);
 const packageJson = require("../package.json");
@@ -189,6 +192,129 @@ export default function (pi) {
             logError(`QQ #resume 执行失败: ${err}`);
             return false;
         }
+    }
+    // ── 实例生命周期（#create / #close）──
+    /** shell 单引号转义（spawn 的 sh -c 命令里包裹路径） */
+    function shellQuote(s) {
+        return `'${s.replace(/'/g, `'\\''`)}'`;
+    }
+    /** 新实例 stderr 日志 fd（写入 qq-integration/spawn/<ts>.log，失败则 ignore） */
+    function openSpawnLog() {
+        try {
+            const dir = join(PATHS.DATA_DIR, "qq-integration", "spawn");
+            mkdirSync(dir, { recursive: true });
+            return openSync(join(dir, `${Date.now()}.log`), "a");
+        }
+        catch {
+            return "ignore";
+        }
+    }
+    /**
+     * #create：spawn 一个新的 pi 实例。
+     * - rpc mode：headless 长驻（interactive 需要 TTY，无 TTY 时 pi 自动降级 print 处理完退出）
+     * - stdin 用 `tail -f /dev/null |` 保活：pi rpc 在 stdin EOF 时退出；且不依赖本进程生命周期，
+     *   本（leader）进程退出后 follower 仍可重新选举
+     * - 角色由锁选举自动决定（leader 已存在 → 自动成为 follower），instanceId 默认 = PID（唯一）
+     */
+    async function spawnInstance(opts) {
+        try {
+            if (!existsSync(opts.cwd)) {
+                mkdirSync(opts.cwd, { recursive: true });
+            }
+            const piBin = process.env.PI_BIN || "pi";
+            const args = ["--mode", "rpc"];
+            if (opts.sessionPath) {
+                args.push("--session", opts.sessionPath);
+            }
+            const cmd = `exec tail -f /dev/null | ${piBin} ${args.map(shellQuote).join(" ")}`;
+            const logFd = openSpawnLog();
+            const child = spawn("sh", ["-c", cmd], {
+                cwd: opts.cwd,
+                detached: true,
+                stdio: ["ignore", "ignore", logFd],
+                env: process.env,
+            });
+            child.unref();
+            info(`#create: 已 spawn 新实例 (sh=${child.pid}, cwd=${opts.cwd}${opts.sessionPath ? `, session=${opts.sessionPath}` : ""})`);
+            // poll registry：等新实例注册（spawn 前快照，找新增实例）
+            const before = new Set(Object.keys(readRegistry().instances));
+            const deadline = Date.now() + DEFAULTS.SPAWN_WAIT_MS;
+            while (Date.now() < deadline) {
+                await new Promise((r) => setTimeout(r, 500));
+                const reg = readRegistry();
+                const fresh = Object.values(reg.instances).find((i) => i.role === "follower" && !before.has(i.id));
+                if (fresh) {
+                    info(`#create: 新实例已上线 → ${fresh.id} (pid=${fresh.pid})`);
+                    return { ok: true, pid: fresh.pid };
+                }
+            }
+            return {
+                ok: false,
+                error: "新实例未在超时内注册（可能启动失败，见 spawn 日志）",
+            };
+        }
+        catch (err) {
+            logError(`#create spawn 失败: ${err}`);
+            return { ok: false, error: err.message };
+        }
+    }
+    /**
+     * #close：关闭指定实例。
+     * 校验：registry 中存在该 pid + /proc/<pid>/cmdline 确认是 pi 进程，防误杀。
+     * SIGTERM → 超时 SIGKILL。self=true 表示目标是自己（调用方负责先回复再退出）。
+     */
+    async function closeInstance(pid) {
+        if (!Number.isInteger(pid) || pid <= 0) {
+            return { ok: false, error: "无效的实例 ID" };
+        }
+        if (pid === process.pid) {
+            // 关闭自己：不 kill（避免清理被跳过），由调用方先回复再退出
+            return { ok: true, self: true };
+        }
+        const reg = readRegistry();
+        const inst = Object.values(reg.instances).find((i) => i.pid === pid);
+        if (!inst) {
+            return { ok: false, error: `实例 ${pid} 不在注册表中` };
+        }
+        // Linux 下校验 cmdline 确实是 pi 进程
+        if (process.platform === "linux") {
+            try {
+                const cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf8").replace(/\0/g, " ");
+                if (!cmdline.includes("pi") && !cmdline.includes("pi-coding-agent")) {
+                    return { ok: false, error: `PID ${pid} 不是 pi 进程，已拒绝关闭` };
+                }
+            }
+            catch {
+                return { ok: false, error: `无法读取 /proc/${pid}（进程可能已退出）` };
+            }
+        }
+        try {
+            process.kill(pid, "SIGTERM");
+            info(`#close: 已向实例 ${pid} 发送 SIGTERM`);
+        }
+        catch (err) {
+            return { ok: false, error: `发送 SIGTERM 失败: ${err.message}` };
+        }
+        // 等待退出，超时 SIGKILL
+        const deadline = Date.now() + DEFAULTS.INSTANCE_CLOSE_WAIT_MS;
+        while (Date.now() < deadline) {
+            await new Promise((r) => setTimeout(r, 200));
+            try {
+                process.kill(pid, 0);
+            }
+            catch {
+                info(`#close: 实例 ${pid} 已退出`);
+                return { ok: true };
+            }
+        }
+        try {
+            process.kill(pid, "SIGKILL");
+            info(`#close: 实例 ${pid} 超时未退出，已 SIGKILL`);
+        }
+        catch {
+            // 忽略：可能刚好退出了
+        }
+        return { ok: true };
     }
     /** leader 持有：发送消息索引(ref_idx) → 实例 id 映射，用于引用消息定向路由 */
     const _refIdxMap = new Map();
@@ -425,6 +551,8 @@ export default function (pi) {
                 getClaimer: (s) => findClaimer(`${s.type}:${s.id}`),
                 getCurrentSessionFile: () => (_sessionManagerRef?.getSessionFile() ?? null),
                 getCwd: () => (_sessionManagerRef?.getCwd() ?? null),
+                spawnInstance: (o) => spawnInstance(o),
+                closeInstance: (p) => closeInstance(p),
             });
             _ws = createWsClient(_auth, {
                 onAuthFailed: () => {
@@ -646,6 +774,8 @@ export default function (pi) {
             getClaimer: (s) => findClaimer(`${s.type}:${s.id}`),
             getCurrentSessionFile: () => (_sessionManagerRef?.getSessionFile() ?? null),
             getCwd: () => (_sessionManagerRef?.getCwd() ?? null),
+            spawnInstance: (o) => spawnInstance(o),
+            closeInstance: (p) => closeInstance(p),
         });
         tryFollower(ctx);
     }

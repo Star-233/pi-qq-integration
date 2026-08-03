@@ -1,4 +1,4 @@
-import { readdirSync, statSync, readFileSync } from "node:fs";
+import { readdirSync, statSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { userInfo } from "node:os";
 import { error as logError } from "./logger.js";
@@ -216,6 +216,59 @@ export function createSessionManager() {
         }
     }
     /**
+     * 读取 session 文件头部（session header）里的 cwd 字段。
+     * #create 复用 session 时用真实 cwd 作为新实例工作目录，零歧义（不依赖目录名反解）。
+     */
+    function getSessionCwd(filePath) {
+        try {
+            const raw = readFileSync(filePath, "utf-8");
+            const firstLine = raw.split("\n", 1)[0];
+            const header = JSON.parse(firstLine);
+            if (header?.type === "session" && typeof header.cwd === "string" && header.cwd) {
+                return header.cwd;
+            }
+            return undefined;
+        }
+        catch {
+            return undefined;
+        }
+    }
+    /**
+     * 项目目录编码反解（兜底方案；优先用 getSessionCwd）。
+     * pi 的编码规则：去掉开头 / 或 \，再把 / \ : 替换为 -，外层包 --。
+     * 注意普通 '-' 与分隔符 '-' 存在歧义，靠 existsSync 消歧：
+     * 从"全分隔"到"合并"逐个尝试，返回第一个真实存在的路径。
+     *   --home-nullsky-.pi-agent-extensions-- → /home/nullsky/.pi/agent/extensions
+     */
+    function unencodeProjectDir(dirName) {
+        if (!dirName.startsWith("--") || !dirName.endsWith("--"))
+            return dirName;
+        const inner = dirName.slice(2, -2);
+        const parts = inner.split("-");
+        if (parts.length <= 1)
+            return `/${inner}`;
+        const n = parts.length;
+        // mask 的每一位表示对应位置是否为分隔符；从全分隔（最常见）递减到全合并
+        for (let mask = (1 << (n - 1)) - 1; mask >= 0; mask--) {
+            const segs = [];
+            let cur = parts[0];
+            for (let i = 1; i < n; i++) {
+                if (mask & (1 << (i - 1))) {
+                    segs.push(cur);
+                    cur = parts[i];
+                }
+                else {
+                    cur += `-${parts[i]}`;
+                }
+            }
+            segs.push(cur);
+            const candidate = `/${segs.join("/")}`;
+            if (existsSync(candidate))
+                return candidate;
+        }
+        return `/${inner.replace(/-/g, "/")}`;
+    }
+    /**
      * 格式化 session 列表为 Markdown（展示自定义名优先，否则最后一条用户消息摘要）
      * @param cwd 只显示当前工作目录对应的项目
      * @param currentFile 当前实例活跃的 session 文件路径（匹配时标记 📌 当前）
@@ -241,5 +294,42 @@ export function createSessionManager() {
         })
             .join("\n");
     }
-    return { listSessions, getSessionPreview, getSessionFilePreview, formatSessionList };
+    /**
+     * 分页格式化**全部** session（跨项目，按 mtime 降序）。
+     * 序号为全局序号（跨页连续），可直接用于 #resume / #create。
+     */
+    function formatSessionListPage(opts) {
+        const sessions = listSessions();
+        const total = sessions.length;
+        if (total === 0)
+            return { text: "暂无 session", total: 0, totalPages: 0 };
+        const totalPages = Math.ceil(total / opts.pageSize);
+        const page = Math.min(Math.max(1, opts.page), totalPages);
+        const start = (page - 1) * opts.pageSize;
+        const items = sessions.slice(start, start + opts.pageSize);
+        const lines = items.map((s, i) => {
+            const idx = start + i + 1;
+            const ago = relativeTime(s.modifiedAt);
+            const isCurrent = !!opts.currentFile && s.path === opts.currentFile;
+            const display = getSessionDisplay(s.path);
+            const title = display.customName
+                ? `**${display.customName}**`
+                : display.lastUserMessage
+                    ? `💬 ${display.lastUserMessage.slice(0, DEFAULTS.MSG_PREVIEW_LEN)}`
+                    : s.rawName;
+            const mark = isCurrent ? "📌 " : "";
+            const suffix = isCurrent ? "（当前）" : "";
+            return `${idx}. ${mark}${title} — ${ago}${suffix}`;
+        });
+        return { text: lines.join("\n"), total, totalPages };
+    }
+    return {
+        listSessions,
+        getSessionPreview,
+        getSessionFilePreview,
+        formatSessionList,
+        formatSessionListPage,
+        getSessionCwd,
+        unencodeProjectDir,
+    };
 }

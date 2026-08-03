@@ -44,6 +44,12 @@ export const DEFAULTS = {
 	LOG_MAX_BUFFER: 200,
 	INTENTS: 1 << 25, // C2C + GROUP_AT + FRIEND_ADD + GROUP_ADD_ROBOT
 	SESSION_LIST_LIMIT: 20,
+	/** #sessions 分页：每页条数 */
+	SESSION_PAGE_SIZE: 10,
+	/** #create spawn 新实例后等待其注册到 registry 的超时（ms） */
+	SPAWN_WAIT_MS: 15_000,
+	/** #close 发送 SIGTERM 后等待进程退出的时长（ms），超时则 SIGKILL */
+	INSTANCE_CLOSE_WAIT_MS: 5_000,
 	HISTORY_DEFAULT: 5,
 	MSG_PREVIEW_LEN: 300,
 	CONTENT_PREVIEW_LEN: 100,

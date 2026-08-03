@@ -11,8 +11,13 @@
 
 ## 0.5.2
 
+- 新增 `#create`：leader 从 QQ 侧 spawn 新的 pi 实例（follower）——`#create <序号/名称>` 复用现有 session（`--session` + session 头部真实 cwd），`#create new [--dir <目录>]` 全新 session（缺省当前实例 cwd）。rpc mode headless 长驻，`tail -f /dev/null |` 保活 stdin（不随 leader 生命周期），实例 ID = PID
+- 新增 `#close <实例ID>`：关闭指定实例（registry 匹配 + `/proc/<pid>/cmdline` 校验防误杀，SIGTERM → 超时 SIGKILL）；可关闭 leader（先回复再退出，剩余实例自动重新选举）
+- `#sessions` 改为显示全部 session（不再按实例目录过滤），按最近使用时间降序，支持分页（每页 10 条，`#sessions <页码>`，全局序号跨页连续，直接用于 `#resume`/`#create`）
+- `#resume` 匹配改为全量 session 列表（与 `#sessions` 序号一致）
+- session-manager 新增 `formatSessionListPage`（分页）、`getSessionCwd`（读 session 头部 cwd，零歧义）、`unencodeProjectDir`（项目目录名反解，existsSync 消歧）
+
 - 修复：`#history` 在多实例下展示错误实例的消息——原实现取「全局最近修改」的 session 文件（可能属于其他实例，导致看到的不是当前实例的对话）；改为通过当前实例的 `sessionManager.getSessionFile()` 定向读取本实例的 session 历史（session 切换后自动指向新文件）；拿不到时回退旧逻辑
-- 修复：`#sessions` 只显示**当前工作目录**下的 session（多实例共享 sessions 目录时不再混入其他项目的会话）；展示格式改为「自定义名（/rename）优先，否则最后一条用户消息摘要」+ 相对时间，并标记当前实例活跃的 session（📌 当前）
 - 修复：`#new` 真正执行创建新 session（hack 直接调同步方法 `sessionManager.newSession()`，pi 扩展 API 未暴露；首次实现误用 Promise.catch 导致 TypeError，已修复）；`#resume` 同样真正执行切换（`sessionManager.setSessionFile(path)`），不再提示终端手动操作。均绕过命令流程可能状态不一致，实测有问题则回退
 
 ## 0.5.1

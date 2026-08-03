@@ -20,6 +20,19 @@ export declare function createCommandHandler(api: ApiClient, sessionManager: Ses
     getClaimer?: (session: QBSession) => InstanceEntry | null;
     getCurrentSessionFile?: () => string | null;
     getCwd?: () => string | null;
+    spawnInstance?: (opts: {
+        cwd: string;
+        sessionPath?: string;
+    }) => Promise<{
+        ok: boolean;
+        pid?: number;
+        error?: string;
+    }>;
+    closeInstance?: (pid: number) => Promise<{
+        ok: boolean;
+        self?: boolean;
+        error?: string;
+    }>;
 }): {
     tryHandle: (text: string, from: QBSession) => Promise<boolean>;
 };

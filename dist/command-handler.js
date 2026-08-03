@@ -1,5 +1,6 @@
 import { debug, info } from "./logger.js";
 import { DEFAULTS } from "./constants.js";
+import { homedir } from "node:os";
 /** 转义用户可控内容，防止逃逸 Markdown 代码段/代码块/粗体 */
 function esc(s) {
     return s
@@ -28,7 +29,7 @@ export function createCommandHandler(api, sessionManager, callbacks) {
                 await cmdHelp(from);
                 return true;
             case "sessions":
-                await cmdSessions(from);
+                await cmdSessions(from, args);
                 return true;
             case "resume":
                 await cmdResume(from, args);
@@ -72,7 +73,7 @@ export function createCommandHandler(api, sessionManager, callbacks) {
             "| 命令 | 说明 |",
             "|------|------|",
             "| `#help` | 显示此帮助 |",
-            "| `#sessions` | 列出所有 pi session |",
+            "| `#sessions [页码]` | 列出全部 session（按最近使用排序，每页 10 条）|",
             "| `#resume <序号/名称>` | 切换到指定 session（支持序号或名称匹配）|",
             "| `#new` | 创建新 session |",
             "| `#clear` | 清空当前 session |",
@@ -81,37 +82,52 @@ export function createCommandHandler(api, sessionManager, callbacks) {
             "| `#target` | 将当前 QQ 会话设为默认转发目标 |",
             "| `#instances` | 列出所有在线 pi 实例 |",
             "| `#to <实例> [内容]` | 切换当前会话到指定实例（带内容则定向发送） |",
+            "| `#create <序号/名称>` | 创建新实例并复用指定 session |",
+            "| `#create new [--dir <目录>]` | 创建全新 session 的新实例（可指定工作目录）|",
+            "| `#close <实例ID>` | 关闭指定实例 |",
         ].join("\n"));
     }
-    async function cmdSessions(session) {
-        const list = sessionManager.formatSessionList(callbacks.getCwd?.() ?? undefined, callbacks.getCurrentSessionFile?.() ?? null);
-        debug(`#sessions: 返回 ${list.split("\n").length} 条`);
+    async function cmdSessions(session, arg) {
+        const page = Math.max(1, parseInt(arg.trim(), 10) || 1);
+        const { text, total, totalPages } = sessionManager.formatSessionListPage({
+            page,
+            pageSize: DEFAULTS.SESSION_PAGE_SIZE,
+            currentFile: callbacks.getCurrentSessionFile?.() ?? null,
+        });
+        debug(`#sessions: 第 ${page}/${totalPages} 页`);
         await api.sendMarkdown(session, [
             "## 📋 Pi Sessions",
             "",
-            list,
+            text,
             "",
-            "用 `#resume <序号>` 或 `#resume <名称>` 切换 session",
+            `共 ${total} 条 · 第 ${page}/${totalPages} 页 · 用 \`#sessions <页码>\` 翻页`,
+            "",
+            "`#resume <序号>` 切换 · `#create <序号>` 用该 session 创建新实例",
         ].join("\n"));
+    }
+    /** 按序号或名称/路径匹配 session（与 #sessions 全量列表一致） */
+    function resolveSession(arg, sessions) {
+        const idx = parseInt(arg, 10);
+        if (idx > 0 && idx <= sessions.length)
+            return sessions[idx - 1];
+        return sessions.find((s) => s.name.includes(arg) ||
+            s.rawName.includes(arg) ||
+            s.projectDir.includes(arg));
+    }
+    /** ~ 展开为 home 目录 */
+    function expandTilde(p) {
+        if (p === "~")
+            return homedir();
+        if (p.startsWith("~/"))
+            return `${homedir()}${p.slice(1)}`;
+        return p;
     }
     async function cmdResume(session, arg) {
         if (!arg) {
             await api.sendText(session, "用法: `#resume <序号|名称>`");
             return;
         }
-        const sessions = sessionManager.listSessions(callbacks.getCwd?.() ?? undefined);
-        let match;
-        // 支持按序号匹配: #resume 1
-        const idx = parseInt(arg, 10);
-        if (idx > 0 && idx <= sessions.length) {
-            match = sessions[idx - 1];
-        }
-        else {
-            // 按名称、rawName 或路径匹配
-            match = sessions.find((s) => s.name.includes(arg) ||
-                s.rawName.includes(arg) ||
-                s.projectDir.includes(arg));
-        }
+        const match = resolveSession(arg, sessionManager.listSessions());
         if (!match) {
             await api.sendMarkdown(session, `Session \`${esc(arg)}\` 不存在。用 \`#sessions\` 查看所有可用 session。`);
             return;
@@ -126,6 +142,81 @@ export function createCommandHandler(api, sessionManager, callbacks) {
         // 真正执行 newSession（index.ts 的 callbacks.newSession 直接调 sessionManager.newSession）
         const ok = callbacks.newSession();
         await api.sendMarkdown(session, ok ? "✅ 已创建新 session" : "❌ 创建新 session 失败（当前实例无 sessionManager 引用，请在 pi 终端执行 `/new`）");
+    }
+    /** #create 结果回复 */
+    async function replySpawnResult(session, result, label) {
+        if (result.ok && result.pid) {
+            await api.sendMarkdown(session, `✅ 新实例 **${result.pid}** 已启动（${esc(label)}）。\n用 \`#to ${result.pid}\` 把当前会话切到该实例。`);
+        }
+        else {
+            await api.sendMarkdown(session, `❌ 创建失败: ${esc(result.error ?? "未知错误")}`);
+        }
+    }
+    async function cmdCreate(session, arg) {
+        const spawn = callbacks.spawnInstance;
+        if (!spawn) {
+            await api.sendMarkdown(session, "❌ 当前实例不支持 #create（仅 leader 可创建新实例）");
+            return;
+        }
+        const trimmed = arg.trim();
+        if (!trimmed) {
+            await api.sendText(session, "用法: `#create <序号|名称>` 或 `#create new [--dir <目录>]`");
+            return;
+        }
+        // 全新 session：#create new [--dir <目录>]
+        if (/^new\b/i.test(trimmed)) {
+            const dirMatch = trimmed.match(/(?:--dir|-d)\s+(\S+)/i);
+            const dir = dirMatch
+                ? expandTilde(dirMatch[1])
+                : (callbacks.getCwd?.() ?? homedir());
+            await api.sendMarkdown(session, `⏳ 正在创建新实例（工作目录 \`${esc(dir)}\`）...`);
+            const result = await spawn({ cwd: dir });
+            await replySpawnResult(session, result, `全新 session @ ${dir}`);
+            return;
+        }
+        // 复用现有 session：#create <序号|名称>
+        const match = resolveSession(trimmed, sessionManager.listSessions());
+        if (!match) {
+            await api.sendMarkdown(session, `Session \`${esc(trimmed)}\` 不存在。用 \`#sessions\` 查看。`);
+            return;
+        }
+        // 工作目录优先取 session 头部的真实 cwd（零歧义），缺失时反解项目目录名
+        const cwd = sessionManager.getSessionCwd(match.path) ??
+            sessionManager.unencodeProjectDir(match.projectDir);
+        await api.sendMarkdown(session, `⏳ 正在创建实例（session \`${esc(match.rawName)}\`）...`);
+        const result = await spawn({ cwd, sessionPath: match.path });
+        await replySpawnResult(session, result, match.rawName);
+    }
+    async function cmdClose(session, arg) {
+        const close = callbacks.closeInstance;
+        if (!close) {
+            await api.sendMarkdown(session, "❌ 当前实例不支持 #close");
+            return;
+        }
+        const pid = parseInt(arg.trim(), 10);
+        if (!Number.isInteger(pid) || pid <= 0) {
+            await api.sendText(session, "用法: `#close <实例ID>`（用 `#instances` 查看在线实例）");
+            return;
+        }
+        const result = await close(pid);
+        if (!result.ok) {
+            await api.sendMarkdown(session, `❌ 关闭失败: ${esc(result.error ?? "未知错误")}`);
+            return;
+        }
+        if (result.self) {
+            // 关闭自己（leader 被 #close）：先回复再退出，剩余实例自动重新选举
+            await api.sendMarkdown(session, `🔄 正在关闭当前实例（${pid}），剩余实例将自动重新选举 leader ...`, undefined, { claim: false });
+            setTimeout(() => {
+                try {
+                    process.exit(0);
+                }
+                catch {
+                    // 忽略
+                }
+            }, 2000);
+            return;
+        }
+        await api.sendMarkdown(session, `✅ 实例 **${pid}** 已关闭`);
     }
     async function cmdClear(session) {
         await api.sendText(session, "请在 pi 终端中输入 `/compact` 压缩对话");
