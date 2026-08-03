@@ -3,7 +3,7 @@ export interface QQBotConfig {
     appId: string;
     appSecret: string;
     settings?: QqSettings;
-    /** 多实例：本实例唯一 ID（默认 hostname-pid） */
+    /** 多实例：本实例唯一 ID（默认 PID，即 #to <PID> 切换的标识） */
     instanceId?: string;
     /** 多实例：强制角色，默认 auto（由文件锁选举） */
     role?: "auto" | "leader" | "follower";

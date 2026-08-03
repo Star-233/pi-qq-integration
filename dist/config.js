@@ -1,5 +1,4 @@
 import { readFileSync, writeFileSync, renameSync, existsSync, chmodSync } from "node:fs";
-import { hostname } from "node:os";
 import { DEFAULT_QQ_SETTINGS } from "./types.js";
 import { PATHS } from "./constants.js";
 import { warn } from "./logger.js";
@@ -55,7 +54,7 @@ export function loadMultiInstanceConfig() {
     const role = parsed.role === "leader" || parsed.role === "follower" ? parsed.role : "auto";
     const instanceId = parsed.instanceId && parsed.instanceId.trim()
         ? parsed.instanceId.trim()
-        : `${hostname()}-${process.pid}`;
+        : `${process.pid}`; // 默认实例标识 = PID（#to <PID> 切换）
     return { instanceId, role };
 }
 /** 从配置文件中读取转发设置 */

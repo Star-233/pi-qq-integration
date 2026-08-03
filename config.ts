@@ -1,5 +1,4 @@
 import { readFileSync, writeFileSync, renameSync, existsSync, chmodSync } from "node:fs";
-import { hostname } from "node:os";
 import type { QQBotConfig, QqSettings } from "./types.js";
 import { DEFAULT_QQ_SETTINGS } from "./types.js";
 import { PATHS } from "./constants.js";
@@ -66,7 +65,7 @@ export function loadMultiInstanceConfig(): { instanceId: string; role: "auto" | 
 	const instanceId =
 		parsed.instanceId && parsed.instanceId.trim()
 			? parsed.instanceId.trim()
-			: `${hostname()}-${process.pid}`;
+			: `${process.pid}`; // 默认实例标识 = PID（#to <PID> 切换）
 	return { instanceId, role };
 }
 
