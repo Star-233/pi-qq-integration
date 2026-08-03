@@ -16,6 +16,7 @@
 - `#sessions` 改为显示全部 session（不再按实例目录过滤），按最近使用时间降序，支持分页（每页 10 条，`#sessions <页码>`，全局序号跨页连续，直接用于 `#resume`/`#create`）
 - `#resume` 匹配改为全量 session 列表（与 `#sessions` 序号一致）
 - session-manager 新增 `formatSessionListPage`（分页）、`getSessionCwd`（读 session 头部 cwd，零歧义）、`unencodeProjectDir`（项目目录名反解，existsSync 消歧）
+- 修复：`#create`/`#close` 命令分发缺失（case 未编译进 switch，导致 `#create new` 提示未知命令）；新增 `command.test.mjs`（7 用例）覆盖命令分发/spawn 参数/分页/移除命令引导
 
 - 修复：`#history` 在多实例下展示错误实例的消息——原实现取「全局最近修改」的 session 文件（可能属于其他实例，导致看到的不是当前实例的对话）；改为通过当前实例的 `sessionManager.getSessionFile()` 定向读取本实例的 session 历史（session 切换后自动指向新文件）；拿不到时回退旧逻辑
 - 移除 `#resume`/`#new`/`#clear`：这三个命令基于不完整的 hack（绕过命令流程，上下文不清空/不加载），已被 `#create` 取代——复用 session 或全新 session 都通过 spawn 新实例实现，行为完整

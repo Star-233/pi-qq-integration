@@ -31,6 +31,12 @@ export function createCommandHandler(api, sessionManager, callbacks) {
             case "sessions":
                 await cmdSessions(from, args);
                 return true;
+            case "create":
+                await cmdCreate(from, args);
+                return true;
+            case "close":
+                await cmdClose(from, args);
+                return true;
             case "resume":
             case "new":
             case "clear":
