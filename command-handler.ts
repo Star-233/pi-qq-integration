@@ -317,13 +317,18 @@ export function createCommandHandler(
     const lines = list.map((i) => {
       const roleMark = i.role === "leader" ? "🔑 leader" : "👤 follower";
       const claimed = i.claimedSessions?.length ?? 0;
-      const name = i.name?.trim() || "(未命名)";
-      // 脱敏：不暴露 instanceId（含主机名/PID）
-      return `- **${esc(name)}** — ${roleMark}，认领 ${claimed} 个会话`;
+      const ref = i.name?.trim() ? `（${esc(i.name.trim())}）` : "";
+      return `- **${esc(i.id)}**${ref} — ${roleMark}，认领 ${claimed} 个会话`;
     });
     await api.sendMarkdown(
       session,
-      ["## 📋 在线实例", "", "用 `#to <实例名>` 将当前会话切换到指定实例", "", ...lines].join("\n")
+      [
+        "## 📋 在线实例",
+        "",
+        "用 `#to <实例ID>` 将当前会话切换到指定实例",
+        "",
+        ...lines,
+      ].join("\n")
     );
   }
 
@@ -335,10 +340,10 @@ export function createCommandHandler(
       // 查看当前绑定
       const claimer = callbacks.getClaimer?.(session);
       if (claimer) {
-        const name = claimer.name?.trim() || claimer.id;
+        const ref = claimer.name?.trim() ? `（pi session: ${esc(claimer.name.trim())}）` : "";
         await api.sendMarkdown(
           session,
-          `当前会话由实例 **${esc(name)}** 处理。\n用 \`#to <实例名>\` 切换。`
+          `当前会话由实例 **${esc(claimer.id)}**${ref} 处理。\n用 \`#to <实例ID>\` 切换。`
         );
       } else {
         await api.sendMarkdown(
@@ -349,7 +354,8 @@ export function createCommandHandler(
       return;
     }
 
-    // 实例名可能含空格：从长到短匹配最长前缀，剩余作为内容
+    // 目标可能含空格（pi session 名参考）：从长到短匹配最长前缀，剩余作为内容
+    // 匹配优先级：instanceId 精确 > session 名唯一匹配（在 index.ts resolveInstanceByName 中）
     let entry: InstanceEntry | null = null;
     let content = "";
     for (let i = parts.length; i >= 1; i--) {
@@ -365,7 +371,7 @@ export function createCommandHandler(
     if (!entry) {
       await api.sendMarkdown(
         session,
-        `实例 \`${esc(parts[0])}\` 不存在、离线或重名。用 \`#instances\` 查看在线实例。`
+        `实例 \`${esc(parts[0])}\` 不存在或离线。用 \`#instances\` 查看在线实例（instanceId）。`
       );
       return;
     }
@@ -376,7 +382,7 @@ export function createCommandHandler(
       return;
     }
 
-    const displayName = entry.name?.trim() || entry.id;
+    const displayName = entry.id + (entry.name?.trim() ? `（${esc(entry.name.trim())}）` : "");
     if (content) {
       callbacks.injectTo?.(entry.id, session, content);
       // 确认回复不参与会话认领（claim 已由 reroute 切到目标实例）

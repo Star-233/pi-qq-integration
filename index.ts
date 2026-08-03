@@ -45,7 +45,7 @@ import {
 	clearLog,
 } from "./logger.js";
 import { createRequire } from "node:module";
-import { hostname } from "node:os";
+
 import { PATHS, DEFAULTS, sessionTag } from "./constants.js";
 
 const require = createRequire(import.meta.url);
@@ -202,8 +202,8 @@ export default function (pi: ExtensionAPI) {
 	const _multi = loadMultiInstanceConfig();
 	let _role: "leader" | "follower" | null = null;
 	const _instanceId = _multi.instanceId;
-	/** 实例显示名 = 当前活跃 pi session 名（回退 hostname/instanceId），用于 QQ 端署名与 #to 定向 */
-	let _displayName: string = _instanceId;
+	/** 当前活跃 pi session 名（仅作为用户参考展示，不参与区分/路由；区分实例统一用 _instanceId） */
+	let _sessionRef: string = "";
 	/** leader 持有：发送消息索引(ref_idx) → 实例 id 映射，用于引用消息定向路由 */
 	const _refIdxMap = new Map<string, { instanceId: string; ts: number }>();
 	const _roleConfig = _multi.role;
@@ -255,50 +255,46 @@ export default function (pi: ExtensionAPI) {
 			id: _instanceId,
 			pid: process.pid,
 			role,
-			name: _displayName,
+			name: _sessionRef,
 			startedAt: Date.now(),
 			heartbeatAt: Date.now(),
 			claimedSessions: [],
 		};
 	}
 
-	// ── 实例显示名（= 当前活跃 pi session 名）──
+	// ── pi session 名参考（仅展示用，不参与区分/路由）──
 
-	/** 从 ctx 读取当前 pi session 名并刷新显示名（回退 hostname/instanceId） */
-	function updateDisplayName(ctx?: ExtensionContext): void {
+	/** 从 ctx 读取当前 pi session 名并刷新参考名（清洗后存入 registry.name） */
+	function updateSessionRef(ctx?: ExtensionContext): void {
 		let name: string | undefined;
 		try {
 			name = ctx?.sessionManager?.getSessionName?.()?.trim() || undefined;
 		} catch {
 			// 忽略
 		}
-		const next = sanitizeDisplayName(name) || hostname() || _instanceId;
-		if (next !== _displayName) {
-			_displayName = next;
-			info(`实例显示名更新: ${_displayName}`);
-			publishInstanceName();
+		const next = sanitizeDisplayName(name);
+		if (next !== _sessionRef) {
+			_sessionRef = next;
+			if (next) info(`实例 session 参考名更新: ${_sessionRef}`);
+			publishSessionRef();
 		}
 	}
 
-	/** 把当前显示名上报到 registry（leader 直接写，follower 经 IPC 给 leader） */
-	function publishInstanceName(): void {
+	/** 把当前 session 参考名上报到 registry（leader 直接写，follower 经 IPC 给 leader） */
+	function publishSessionRef(): void {
 		if (_role === "leader") {
-			// leader 自身名字也过唯一化，维持 registry 中实例名唯一不变量
-			upsertInstance({
-				...selfEntry("leader"),
-				name: uniqueInstanceName(_displayName, _instanceId),
-			});
+			upsertInstance(selfEntry("leader"));
 		} else if (_role === "follower" && _ipcClient) {
-			_ipcClient.send({ type: "instance_update", name: _displayName });
+			_ipcClient.send({ type: "instance_update", name: _sessionRef });
 		}
 	}
 
-	/** 出站消息统一署名前缀，让 QQ 用户知道消息来自哪个实例 */
+	/** 出站消息统一署名前缀：实例唯一标识（instanceId），让 QQ 用户知道消息来自哪个实例 */
 	function decorate(text: string): string {
-		return `【${_displayName}】${text}`;
+		return `【${_instanceId}】${text}`;
 	}
 
-	/** 从引用消息内容中提取实例署名（【名字】前缀），用于兜底路由 */
+	/** 从引用消息内容中提取实例署名（【xxx】前缀），用于兜底路由 */
 	function extractBracketName(content: string): string | null {
 		const m = content.match(/^【([^】]+)】/);
 		return m ? m[1] : null;
@@ -330,7 +326,7 @@ export default function (pi: ExtensionAPI) {
 		}
 	}
 
-	/** 解析引用消息应路由到的实例 id：ref_idx 精确映射优先，署名匹配兜底 */
+	/** 解析引用消息应路由到的实例 id：ref_idx 精确映射优先，署名（instanceId）匹配兜底 */
 	function resolveRouteInstance(qqMsg: QQMessage): string | null {
 		if (qqMsg.refMsgIdx) {
 			const hit = _refIdxMap.get(qqMsg.refMsgIdx);
@@ -339,12 +335,12 @@ export default function (pi: ExtensionAPI) {
 				_refIdxMap.delete(qqMsg.refMsgIdx);
 			}
 		}
-		// 署名兜底：被引用消息确为机器人所发（字段存在时），且恰好一个实例名匹配才路由
+		// 署名兜底：被引用消息确为机器人所发（字段存在时），且恰好一个实例 id 匹配才路由
 		if (qqMsg.refMsgContent) {
 			if (qqMsg.refMsgFromBot === false) return null;
-			const name = extractBracketName(qqMsg.refMsgContent);
-			if (name) {
-				const matches = Object.values(readRegistry().instances).filter((i) => i.name === name);
+			const signed = extractBracketName(qqMsg.refMsgContent);
+			if (signed) {
+				const matches = Object.values(readRegistry().instances).filter((i) => i.id === signed);
 				return matches.length === 1 ? matches[0].id : null;
 			}
 		}
@@ -353,7 +349,7 @@ export default function (pi: ExtensionAPI) {
 
 	// ── 多实例定向辅助（#to / #instances）──
 
-	/** 先按 instanceId 精确匹配，再按显示名匹配；重名返回 null 由调用方提示 */
+	/** 解析 #to 目标：instanceId 精确匹配优先，pi session 名（参考）唯一匹配兜底 */
 	function resolveInstanceByName(target: string): InstanceEntry | null {
 		const reg = readRegistry();
 		const byId = reg.instances[target];
@@ -537,10 +533,9 @@ export default function (pi: ExtensionAPI) {
 						logError("register 拒绝: 非法实例条目");
 						return;
 					}
-					// 显示名清洗 + 唯一化（防署名冒用/定向歧义）；空名置 undefined 防脱敏回退泄露
+					// session 参考名清洗（仅展示用，不参与区分/路由）；空名置 undefined
 					const cleaned = entry.name ? sanitizeDisplayName(entry.name) : "";
-					const name = cleaned ? uniqueInstanceName(cleaned, entry.id) : undefined;
-					upsertInstance({ ...entry, name });
+					upsertInstance({ ...entry, name: cleaned || undefined });
 				},
 				onClaim: (sessionKey, instanceId) => {
 					if (!isValidSessionKey(sessionKey)) {
@@ -562,12 +557,10 @@ export default function (pi: ExtensionAPI) {
 						logError(`instance_update 拒绝: 未知实例 ${instanceId}`);
 						return;
 					}
+					// session 参考名清洗（仅展示用）
 					const cleaned = sanitizeDisplayName(name);
-					if (!cleaned) return;
-					// 重名唯一化
-					const unique = uniqueInstanceName(cleaned, instanceId);
-					upsertInstance({ ...inst, name: unique });
-					debug(`实例 ${instanceId} 显示名更新: ${unique}`);
+					upsertInstance({ ...inst, name: cleaned || undefined });
+					if (cleaned) debug(`实例 ${instanceId} session 参考名更新: ${cleaned}`);
 				},
 				onReroute: (sessionKey, targetId, fromId) => {
 					if (!isValidSessionKey(sessionKey) || typeof targetId !== "string" || !targetId || targetId.length > 128) {
@@ -634,10 +627,7 @@ export default function (pi: ExtensionAPI) {
 			});
 			await _ipcServer.ready;
 			setLeader(_instanceId, LEADER_SOCK_PATH);
-			upsertInstance({
-				...selfEntry("leader"),
-				name: uniqueInstanceName(_displayName, _instanceId),
-			});
+			upsertInstance(selfEntry("leader"));
 			// 立即执行一次 pruneDead，清理上次残留的死实例
 			pruneDead();
 			touchInstance(_instanceId);
@@ -861,21 +851,10 @@ export default function (pi: ExtensionAPI) {
 		return (type === "c2c" || type === "group" || type === "channel") && SESSION_ID_RE.test(id);
 	}
 
-	/** 清洗显示名：去控制字符/换行，限制长度，避免破坏 markdown 署名 */
+	/** 清洗参考名：去控制字符/换行，限制长度，避免破坏 markdown 展示 */
 	function sanitizeDisplayName(name: string | undefined): string {
 		if (!name) return "";
 		return name.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 64);
-	}
-
-	/** 实例名唯一化：与现存其他实例重名时自动加短后缀（防署名冒用/定向歧义） */
-	function uniqueInstanceName(name: string, excludeId: string): string {
-		const conflict = Object.values(readRegistry().instances).some(
-			(i) => i.id !== excludeId && i.name === name
-		);
-		if (!conflict) return name;
-		const shortId = excludeId.replace(/[^A-Za-z0-9]/g, "").slice(-6) || "x";
-		const suffixed = `${name}(${shortId})`;
-		return suffixed.slice(0, 80);
 	}
 
 	async function handleInboundQqMessage(qqMsg: { session: QBSession; content: string }): Promise<void> {
@@ -1175,8 +1154,8 @@ async function disconnect(ctx: ExtensionContext): Promise<void> {
 	// ── 事件 ──
 
 	pi.on("session_start", async (event, ctx) => {
-		// 刷新实例显示名（当前活跃 pi session 名）
-		updateDisplayName(ctx);
+		// 刷新实例 session 参考名（当前活跃 pi session 名，仅展示用）
+		updateSessionRef(ctx);
 		// 启动自动连接（默认开启，可用配置 autoConnect:false 关闭）
 		const autoConnect = config.autoConnect ?? true;
 		if (!autoConnect) {
@@ -1194,9 +1173,9 @@ async function disconnect(ctx: ExtensionContext): Promise<void> {
 		}
 	});
 
-	// 用户重命名/切换 session 后更新实例显示名并同步 registry
+	// 用户重命名/切换 session 后更新实例 session 参考名并同步 registry
 	pi.on("session_info_changed", (event, ctx) => {
-		updateDisplayName(ctx);
+		updateSessionRef(ctx);
 	});
 
 	// 转发桌面端用户消息到 QQ

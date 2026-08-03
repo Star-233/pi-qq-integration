@@ -234,11 +234,16 @@ export function createCommandHandler(api, sessionManager, callbacks) {
         const lines = list.map((i) => {
             const roleMark = i.role === "leader" ? "🔑 leader" : "👤 follower";
             const claimed = i.claimedSessions?.length ?? 0;
-            const name = i.name?.trim() || "(未命名)";
-            // 脱敏：不暴露 instanceId（含主机名/PID）
-            return `- **${esc(name)}** — ${roleMark}，认领 ${claimed} 个会话`;
+            const ref = i.name?.trim() ? `（${esc(i.name.trim())}）` : "";
+            return `- **${esc(i.id)}**${ref} — ${roleMark}，认领 ${claimed} 个会话`;
         });
-        await api.sendMarkdown(session, ["## 📋 在线实例", "", "用 `#to <实例名>` 将当前会话切换到指定实例", "", ...lines].join("\n"));
+        await api.sendMarkdown(session, [
+            "## 📋 在线实例",
+            "",
+            "用 `#to <实例ID>` 将当前会话切换到指定实例",
+            "",
+            ...lines,
+        ].join("\n"));
     }
     /** 切换/定向实例：`#to` 查看绑定，`#to <实例> [内容]` 切换并可选定向发送 */
     async function cmdTo(session, arg) {
@@ -247,15 +252,16 @@ export function createCommandHandler(api, sessionManager, callbacks) {
             // 查看当前绑定
             const claimer = callbacks.getClaimer?.(session);
             if (claimer) {
-                const name = claimer.name?.trim() || claimer.id;
-                await api.sendMarkdown(session, `当前会话由实例 **${esc(name)}** 处理。\n用 \`#to <实例名>\` 切换。`);
+                const ref = claimer.name?.trim() ? `（pi session: ${esc(claimer.name.trim())}）` : "";
+                await api.sendMarkdown(session, `当前会话由实例 **${esc(claimer.id)}**${ref} 处理。\n用 \`#to <实例ID>\` 切换。`);
             }
             else {
                 await api.sendMarkdown(session, "当前会话未绑定实例（默认由最后活跃实例处理）。用 `#instances` 查看可定向的实例。");
             }
             return;
         }
-        // 实例名可能含空格：从长到短匹配最长前缀，剩余作为内容
+        // 目标可能含空格（pi session 名参考）：从长到短匹配最长前缀，剩余作为内容
+        // 匹配优先级：instanceId 精确 > session 名唯一匹配（在 index.ts resolveInstanceByName 中）
         let entry = null;
         let content = "";
         for (let i = parts.length; i >= 1; i--) {
@@ -268,7 +274,7 @@ export function createCommandHandler(api, sessionManager, callbacks) {
             }
         }
         if (!entry) {
-            await api.sendMarkdown(session, `实例 \`${esc(parts[0])}\` 不存在、离线或重名。用 \`#instances\` 查看在线实例。`);
+            await api.sendMarkdown(session, `实例 \`${esc(parts[0])}\` 不存在或离线。用 \`#instances\` 查看在线实例（instanceId）。`);
             return;
         }
         const ok = callbacks.rerouteTo?.(entry.id, session);
@@ -276,7 +282,7 @@ export function createCommandHandler(api, sessionManager, callbacks) {
             await api.sendMarkdown(session, "❌ 切换失败：IPC 未连接或实例不可用，请稍后重试。");
             return;
         }
-        const displayName = entry.name?.trim() || entry.id;
+        const displayName = entry.id + (entry.name?.trim() ? `（${esc(entry.name.trim())}）` : "");
         if (content) {
             callbacks.injectTo?.(entry.id, session, content);
             // 确认回复不参与会话认领（claim 已由 reroute 切到目标实例）

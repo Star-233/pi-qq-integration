@@ -19,7 +19,7 @@ export interface InstanceEntry {
     id: string;
     pid: number;
     role: QBRole;
-    /** 实例显示名 = 当前活跃 pi session 名（供 QQ 端署名 / #to 定向） */
+    /** pi session 名（仅作为用户参考展示，不参与区分/路由；区分实例统一用 id） */
     name?: string;
     piSession?: string;
     sockPath?: string;
