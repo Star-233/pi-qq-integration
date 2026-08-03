@@ -28,6 +28,18 @@ import { createWsClient, type WsClient } from "./ws-client.js";
 import { createApiClient, type ApiClient } from "./api-client.js";
 import { createSessionManager, type SessionManager } from "./session-manager.js";
 import { createCommandHandler } from "./command-handler.js";
+import {
+	extractBracketName,
+	resolveRouteInstance,
+	resolveInstanceByName,
+	REF_IDX_TTL_MS,
+	type RefIdxMap,
+} from "./routing.js";
+import {
+	isValidSession,
+	isValidSessionKey,
+	sanitizeDisplayName,
+} from "./validation.js";
 import type {
 	InstanceEntry,
 	QQMessage,
@@ -206,7 +218,7 @@ export default function (pi: ExtensionAPI) {
 	/** 当前活跃 pi session 名（仅作为用户参考展示，不参与区分/路由；区分实例统一用 _instanceId） */
 	let _sessionRef: string = "";
 	/** leader 持有：发送消息索引(ref_idx) → 实例 id 映射，用于引用消息定向路由 */
-	const _refIdxMap = new Map<string, { instanceId: string; ts: number }>();
+	const _refIdxMap: RefIdxMap = new Map();
 	const _roleConfig = _multi.role;
 	let _ipcServer: ReturnType<typeof createIpcServer> | null = null;
 	let _ipcClient: ReturnType<typeof createIpcClient> | null = null;
@@ -295,15 +307,7 @@ export default function (pi: ExtensionAPI) {
 		return `【${_instanceId}】${text}`;
 	}
 
-	/** 从引用消息内容中提取实例署名（【xxx】前缀），用于兜底路由 */
-	function extractBracketName(content: string): string | null {
-		const m = content.match(/^【([^】]+)】/);
-		return m ? m[1] : null;
-	}
-
 	// ── 引用消息定向路由（leader 持有 refIdxMap）──
-
-	const REF_IDX_TTL_MS = 60 * 60 * 1000; // 与被动消息有效期一致
 
 	/** 发送成功后记录 ref_idx → 实例，供用户引用该消息时定向路由 */
 	function trackSentRef(resp: SendMessageResponse | undefined, instanceId: string): void {
@@ -327,37 +331,7 @@ export default function (pi: ExtensionAPI) {
 		}
 	}
 
-	/** 解析引用消息应路由到的实例 id：ref_idx 精确映射优先，署名（instanceId）匹配兜底 */
-	function resolveRouteInstance(qqMsg: QQMessage): string | null {
-		if (qqMsg.refMsgIdx) {
-			const hit = _refIdxMap.get(qqMsg.refMsgIdx);
-			if (hit) {
-				if (Date.now() - hit.ts <= REF_IDX_TTL_MS) return hit.instanceId;
-				_refIdxMap.delete(qqMsg.refMsgIdx);
-			}
-		}
-		// 署名兜底：被引用消息确为机器人所发（字段存在时），且恰好一个实例 id 匹配才路由
-		if (qqMsg.refMsgContent) {
-			if (qqMsg.refMsgFromBot === false) return null;
-			const signed = extractBracketName(qqMsg.refMsgContent);
-			if (signed) {
-				const matches = Object.values(readRegistry().instances).filter((i) => i.id === signed);
-				return matches.length === 1 ? matches[0].id : null;
-			}
-		}
-		return null;
-	}
-
 	// ── 多实例定向辅助（#to / #instances）──
-
-	/** 解析 #to 目标：instanceId 精确匹配优先，pi session 名（参考）唯一匹配兜底 */
-	function resolveInstanceByName(target: string): InstanceEntry | null {
-		const reg = readRegistry();
-		const byId = reg.instances[target];
-		if (byId) return byId;
-		const matches = Object.values(reg.instances).filter((i) => i.name === target);
-		return matches.length === 1 ? matches[0] : null;
-	}
 
 	/** 把会话认领切换到目标实例（leader 直接改 registry，follower 经 IPC 请求） */
 	function rerouteSession(targetId: string, session: QBSession): boolean {
@@ -470,7 +444,7 @@ export default function (pi: ExtensionAPI) {
 				},
 				claimSession: (s: QBSession) => claimSession(s),
 				getInstanceList: () => Object.values(readRegistry().instances),
-				resolveInstance: (target) => resolveInstanceByName(target),
+				resolveInstance: (target) => resolveInstanceByName(target, readRegistry().instances),
 				rerouteTo: (targetId, s) => rerouteSession(targetId, s),
 				injectTo: (targetId, s, c) => injectContent(targetId, s, c),
 				getClaimer: (s) => findClaimer(`${s.type}:${s.id}`),
@@ -488,7 +462,7 @@ export default function (pi: ExtensionAPI) {
 				// 引用消息（message_type=103）优先按被引用消息的来源实例路由
 				let claimer: InstanceEntry | null = null;
 				if (qqMsg.messageType === 103) {
-					const routedId = resolveRouteInstance(qqMsg);
+					const routedId = resolveRouteInstance(qqMsg, _refIdxMap, readRegistry().instances);
 					if (routedId) {
 						const inst = readRegistry().instances[routedId];
 						if (inst && (routedId === _instanceId || _ipcServer?.has(routedId))) {
@@ -696,7 +670,7 @@ export default function (pi: ExtensionAPI) {
 			},
 			claimSession: (s: QBSession) => claimSession(s),
 			getInstanceList: () => Object.values(readRegistry().instances),
-			resolveInstance: (target) => resolveInstanceByName(target),
+			resolveInstance: (target) => resolveInstanceByName(target, readRegistry().instances),
 			rerouteTo: (targetId, s) => rerouteSession(targetId, s),
 			injectTo: (targetId, s, c) => injectContent(targetId, s, c),
 			getClaimer: (s) => findClaimer(`${s.type}:${s.id}`),
@@ -852,37 +826,6 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	// ── IPC 入站数据校验（与 isValidSettings 同范式，防注入畸形数据）──
-
-	/** session.id 仅允许安全字符（与 api-client 一致） */
-	const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
-
-	/** 校验 QQ 会话对象结构（inject 等 IPC 入站数据） */
-	function isValidSession(s: unknown): s is QBSession {
-		if (!s || typeof s !== "object") return false;
-		const o = s as Record<string, unknown>;
-		if (o.type !== "c2c" && o.type !== "group" && o.type !== "channel") return false;
-		if (typeof o.id !== "string" || !SESSION_ID_RE.test(o.id)) return false;
-		if (o.name !== undefined && typeof o.name !== "string") return false;
-		if (o.userId !== undefined && typeof o.userId !== "string") return false;
-		if (o.msgId !== undefined && typeof o.msgId !== "string") return false;
-		if (o.eventId !== undefined && typeof o.eventId !== "string") return false;
-		return true;
-	}
-
-	/** 校验会话认领 key 格式（c2c|group|channel:id） */
-	function isValidSessionKey(key: string): boolean {
-		const idx = key.indexOf(":");
-		if (idx <= 0) return false;
-		const type = key.slice(0, idx);
-		const id = key.slice(idx + 1);
-		return (type === "c2c" || type === "group" || type === "channel") && SESSION_ID_RE.test(id);
-	}
-
-	/** 清洗参考名：去控制字符/换行，限制长度，避免破坏 markdown 展示 */
-	function sanitizeDisplayName(name: string | undefined): string {
-		if (!name) return "";
-		return name.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 64);
-	}
 
 	async function handleInboundQqMessage(qqMsg: { session: QBSession; content: string }): Promise<void> {
 		if (!isAllowed(qqMsg.session)) {

@@ -1,65 +1,67 @@
 {
-  "name": "pi-qq-integration",
-  "version": "0.5.0",
-  "description": "QQ integration for pi — control pi from QQ | pi QQ 集成 — 在 QQ 中操控 pi",
-  "private": false,
-  "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    }
-  },
-  "keywords": [
-    "pi",
-    "pi-package",
-    "pi-extension",
-    "extension",
-    "qq",
-    "bot",
-    "chat"
-  ],
-  "author": "nu11dev",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/Star-233/pi-qq-integration.git"
-  },
-  "bugs": {
-    "url": "https://github.com/Star-233/pi-qq-integration/issues"
-  },
-  "homepage": "https://github.com/Star-233/pi-qq-integration#readme",
-  "scripts": {
-    "build": "tsc",
-    "typecheck": "tsc --noEmit",
-    "prepack": "npm run build"
-  },
-  "dependencies": {
-    "ws": "^8.18.0"
-  },
-  "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
-  },
-  "devDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.81.1",
-    "@types/node": "^26.1.1",
-    "@types/ws": "^8.18.1",
-    "typescript": "^5.0.0"
-  },
-  "pi": {
-    "extensions": [
-      "./dist/index.js"
-    ],
-    "image": "https://raw.githubusercontent.com/Star-233/pi-qq-integration/master/screenshot.png"
-  },
-  "files": [
-    "dist/",
-    "README.md",
-    "README.zh-CN.md",
-    "LICENSE",
-    "CHANGELOG.md",
-    "screenshot.png"
-  ]
+	"name": "pi-qq-integration",
+	"version": "0.5.0",
+	"description": "QQ integration for pi — control pi from QQ | pi QQ 集成 — 在 QQ 中操控 pi",
+	"private": false,
+	"type": "module",
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"keywords": [
+		"pi",
+		"pi-package",
+		"pi-extension",
+		"extension",
+		"qq",
+		"bot",
+		"chat"
+	],
+	"author": "nu11dev",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Star-233/pi-qq-integration.git"
+	},
+	"bugs": {
+		"url": "https://github.com/Star-233/pi-qq-integration/issues"
+	},
+	"homepage": "https://github.com/Star-233/pi-qq-integration#readme",
+	"scripts": {
+		"build": "tsc",
+		"typecheck": "tsc --noEmit",
+		"prepack": "npm run build",
+		"test": "npm run build && node --test --test-timeout=10000",
+		"test:only": "node --test --test-timeout=10000"
+	},
+	"dependencies": {
+		"ws": "^8.18.0"
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-coding-agent": "*"
+	},
+	"devDependencies": {
+		"@earendil-works/pi-coding-agent": "^0.81.1",
+		"@types/node": "^26.1.1",
+		"@types/ws": "^8.18.1",
+		"typescript": "^5.0.0"
+	},
+	"pi": {
+		"extensions": [
+			"./dist/index.js"
+		],
+		"image": "https://raw.githubusercontent.com/Star-233/pi-qq-integration/master/screenshot.png"
+	},
+	"files": [
+		"dist/",
+		"README.md",
+		"README.zh-CN.md",
+		"LICENSE",
+		"CHANGELOG.md",
+		"screenshot.png"
+	]
 }

@@ -1,3 +1,14 @@
+## 测试体系
+
+- 新增 `npm test`（`node --test`，零第三方依赖，Node ≥ 20 内置测试框架）
+- `test/` 目录 5 个测试文件、38 个用例：
+  - `validation.test.mjs` — session 结构/sessionKey/参考名清洗校验
+  - `routing.test.mjs` — ref_idx 精确路由、署名兜底、#to 解析（纯函数，依赖注入）
+  - `lock.test.mjs` — 文件锁互斥/死亡接管/同 PID 恢复/心跳（临时目录 + 子进程）
+  - `registry.test.mjs` — registry 读写/认领唯一性/leader 记录/pruneDead（`QQ_INTEGRATION_DATA_DIR` 隔离）
+  - `ipc.test.mjs` — IPC 真实 socket 收发/同 id 重连接管/非法注册断开
+- 纯逻辑抽离到独立模块：`validation.ts`（校验）、`routing.ts`（路由），index.ts 直接 import（不再测试逻辑副本）
+
 ## 0.5.0
 
 **新功能：多实例消息来源标识 + 定向回复路由**
