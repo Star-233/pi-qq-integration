@@ -121,7 +121,8 @@ export function createIpcServer(sockPath: string, handlers: IpcServerOptions) {
 			}
 		});
 		sock.on("close", () => {
-			if (id) {
+			// 守卫：仅在自身仍是 conns 中的连接时删除，避免同 id 重注册时误删新连接
+			if (id && conns.get(id) === sock) {
 				conns.delete(id);
 				handlers.onDisconnect?.(id);
 			}

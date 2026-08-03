@@ -217,7 +217,11 @@ export default function (pi) {
     /** 把当前显示名上报到 registry（leader 直接写，follower 经 IPC 给 leader） */
     function publishInstanceName() {
         if (_role === "leader") {
-            upsertInstance(selfEntry("leader"));
+            // leader 自身名字也过唯一化，维持 registry 中实例名唯一不变量
+            upsertInstance({
+                ...selfEntry("leader"),
+                name: uniqueInstanceName(_displayName, _instanceId),
+            });
         }
         else if (_role === "follower" && _ipcClient) {
             _ipcClient.send({ type: "instance_update", name: _displayName });
@@ -452,14 +456,15 @@ export default function (pi) {
                         typeof entry.id !== "string" ||
                         entry.id.length === 0 ||
                         entry.id.length > 128 ||
-                        !Number.isInteger(entry.pid)) {
+                        !Number.isInteger(entry.pid) ||
+                        (entry.role !== "leader" && entry.role !== "follower") ||
+                        !Array.isArray(entry.claimedSessions)) {
                         logError("register 拒绝: 非法实例条目");
                         return;
                     }
-                    // 显示名清洗 + 唯一化（防署名冒用/定向歧义）
-                    const name = entry.name
-                        ? uniqueInstanceName(sanitizeDisplayName(entry.name), entry.id)
-                        : undefined;
+                    // 显示名清洗 + 唯一化（防署名冒用/定向歧义）；空名置 undefined 防脱敏回退泄露
+                    const cleaned = entry.name ? sanitizeDisplayName(entry.name) : "";
+                    const name = cleaned ? uniqueInstanceName(cleaned, entry.id) : undefined;
                     upsertInstance({ ...entry, name });
                 },
                 onClaim: (sessionKey, instanceId) => {
@@ -556,7 +561,10 @@ export default function (pi) {
             });
             await _ipcServer.ready;
             setLeader(_instanceId, LEADER_SOCK_PATH);
-            upsertInstance(selfEntry("leader"));
+            upsertInstance({
+                ...selfEntry("leader"),
+                name: uniqueInstanceName(_displayName, _instanceId),
+            });
             // 立即执行一次 pruneDead，清理上次残留的死实例
             pruneDead();
             touchInstance(_instanceId);

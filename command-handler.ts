@@ -317,7 +317,7 @@ export function createCommandHandler(
     const lines = list.map((i) => {
       const roleMark = i.role === "leader" ? "🔑 leader" : "👤 follower";
       const claimed = i.claimedSessions?.length ?? 0;
-      const name = i.name?.trim() || i.id;
+      const name = i.name?.trim() || "(未命名)";
       // 脱敏：不暴露 instanceId（含主机名/PID）
       return `- **${esc(name)}** — ${roleMark}，认领 ${claimed} 个会话`;
     });
