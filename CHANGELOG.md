@@ -26,6 +26,7 @@
 
 ### 安全加固（审计后）
 - 修复：`#to` 确认回复不再回夺会话认领（follower 场景下切换失效的严重 bug）
+- 修复：异步/延时回调（IPC onConnect/onClose、WS onAuthFailed/onFatalError、锁接管）捕获的 ctx 在 `/reload` 或 session 替换后失效，访问 `ctx.ui` 抛 uncaughtException 会拖崩宿主 pi；改为 `safeNotify` 包装捕获，仅跳过 UI 通知（日志不受影响）
 - 安全：IPC 新增端点（inject/reroute/instance_update）全量结构校验 + 权限约束（inject 仅合法实例、reroute 仅当前 claimer）
 - 安全：register 连接级唯一性校验（防伪造实例条目/身份接管）
 - 安全：引用署名兜底改为唯一匹配 + 校验被引用消息确为机器人所发（防消息定向劫持）

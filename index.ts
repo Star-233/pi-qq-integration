@@ -230,6 +230,22 @@ export default function (pi: ExtensionAPI) {
 	/** follower 重连尝试次数（仅日志用） */
 	let _followerRetryCount = 0;
 
+	/** 安全 UI 通知：异步/延时回调中捕获的 ctx 可能在 /reload 或 session 替换后失效
+	 *  （pi 的 ctx.ui getter 内部 assertActive，stale 时直接抛错），
+	 *  捕获异常避免 uncaughtException 拖崩宿主 pi 进程。 */
+	function safeNotify(
+		ctx: ExtensionContext,
+		message: string,
+		type: "info" | "error" | "warning" = "info",
+	): void {
+		try {
+			ctx.ui.notify(message, type);
+		} catch {
+			// ctx 已 stale：仅跳过 UI 通知（日志走模块级 logger，不受影响）
+			debug(`safeNotify: ctx 已失效，跳过通知: ${message}`);
+		}
+	}
+
 	// ── 连接/断开 ──
 
 		// ── 连接/断开（多实例：leader 持 QQ 连接，follower 经 IPC 委派）──
@@ -256,7 +272,7 @@ export default function (pi: ExtensionAPI) {
 		if (isOwner) {
 			await becomeLeader(ctx);
 		} else if (role === "leader") {
-			ctx.ui.notify("QQ Bot: 强制 leader 但锁被占用，转为 follower", "warning");
+			safeNotify(ctx, "QQ Bot: 强制 leader 但锁被占用，转为 follower", "warning");
 			await becomeFollower(ctx);
 		} else {
 			await becomeFollower(ctx);
@@ -382,7 +398,7 @@ export default function (pi: ExtensionAPI) {
 			_auth = createAuthManager(config.appId, config.appSecret);
 			_auth.onFatalError((err) => {
 				logError(`Auth 致命错误: ${err.message}`);
-				ctx.ui.notify(`QQ Bot: Token 刷新连续失败，连接已不可用 ❌`, "error");
+				safeNotify(ctx, `QQ Bot: Token 刷新连续失败，连接已不可用 ❌`, "error");
 				teardown();
 			});
 			await _auth.getToken();
@@ -454,7 +470,7 @@ export default function (pi: ExtensionAPI) {
 			_ws = createWsClient(_auth, {
 				onAuthFailed: () => {
 					logError(`QQ Bot 鉴权失败 (InvalidSession)`);
-					ctx.ui.notify("QQ Bot: 鉴权失败，请检查 appId/appSecret ❌", "error");
+					safeNotify(ctx, "QQ Bot: 鉴权失败，请检查 appId/appSecret ❌", "error");
 					teardown();
 				},
 			});
@@ -613,10 +629,10 @@ export default function (pi: ExtensionAPI) {
 			}, HEARTBEAT_INTERVAL_MS);
 
 			await _ws.connect();
-			ctx.ui.notify("QQ Bot: 已连接 ✅（leader）", "info");
+			safeNotify(ctx, "QQ Bot: 已连接 ✅（leader）", "info");
 		} catch (err) {
 			logError(`初始化失败: ${err}`);
-			ctx.ui.notify(`QQ Bot: 连接失败 ❌ — ${(err as Error).message}`, "error");
+			safeNotify(ctx, `QQ Bot: 连接失败 ❌ — ${(err as Error).message}`, "error");
 			// 失败时清掉半初始化状态，避免残留 _role=leader / 锁心跳导致其它实例卡在 follower
 			await teardown();
 		}
@@ -701,7 +717,7 @@ export default function (pi: ExtensionAPI) {
 				// 同步 leader 的 settings 状态
 				client.send({ type: "settings_request" });
 				info(`已连接 leader（follower）`);
-				ctx.ui.notify("QQ Bot: 已连接 leader ✅（follower）", "info");
+				safeNotify(ctx, "QQ Bot: 已连接 leader ✅（follower）", "info");
 			},
 			onInbound: (msg) => {
 				handleInboundQqMessage({ session: msg.session, content: msg.content });
@@ -745,7 +761,7 @@ export default function (pi: ExtensionAPI) {
 			_ipcClient = null;
 		}
 		info("旧 leader 已退出，本实例接管锁成为新 leader");
-		ctx.ui.notify("QQ Bot: 旧 leader 已退出，本实例接管成为 leader 🆕", "info");
+		safeNotify(ctx, "QQ Bot: 旧 leader 已退出，本实例接管成为 leader 🆕", "info");
 		await becomeLeader(ctx);
 	}
 
