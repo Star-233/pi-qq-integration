@@ -16,6 +16,9 @@
 - `#sessions` 改为显示全部 session（不再按实例目录过滤），按最近使用时间降序，支持分页（每页 10 条，`#sessions <页码>`，全局序号跨页连续，直接用于 `#resume`/`#create`）
 - `#resume` 匹配改为全量 session 列表（与 `#sessions` 序号一致）
 - session-manager 新增 `formatSessionListPage`（分页）、`getSessionCwd`（读 session 头部 cwd，零歧义）、`unencodeProjectDir`（项目目录名反解，existsSync 消歧）
+- `#close` 支持多 PID：`#close 123 456` 空格分隔逐个关闭并汇总回复（✅ 已关闭 / ❌ 失败原因）；多 PID 含自己时先关其他、自己最后退出
+- `#instances` 展示每个实例的认领会话（缩进列表）：名字优先（QQ 会话名），无名字用最近消息摘要，60 字符截断 + 相对时间；claim 时把会话名字/最近消息写入 registry（`claimedSessionInfo`，向后兼容旧数据）
+- `#sessions` / `#instances` 摘要截断统一为 60 字符（`SESSION_PREVIEW_LEN`，#history 仍为 300）
 - 修复：`#create`/`#close` 命令分发缺失（case 未编译进 switch，导致 `#create new` 提示未知命令）；新增 `command.test.mjs`（7 用例）覆盖命令分发/spawn 参数/分页/移除命令引导
 
 - 修复：`#history` 在多实例下展示错误实例的消息——原实现取「全局最近修改」的 session 文件（可能属于其他实例，导致看到的不是当前实例的对话）；改为通过当前实例的 `sessionManager.getSessionFile()` 定向读取本实例的 session 历史（session 切换后自动指向新文件）；拿不到时回退旧逻辑

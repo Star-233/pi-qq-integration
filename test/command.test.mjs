@@ -81,6 +81,68 @@ test("#close 无参数提示用法", async () => {
 	assert.match(sent[0].text, /用法/);
 });
 
+test("#close 多 PID：空格分隔逐个关闭并汇总", async () => {
+	const { handler, calls, sent } = makeHandler({
+		closeInstance: async (pid) => {
+			calls.closeInstance.push(pid);
+			if (pid === 999) return { ok: false, error: "不在注册表中" };
+			return { ok: true };
+		},
+	});
+	await handler.tryHandle("#close 123 999 456", session);
+	assert.deepEqual(calls.closeInstance, [123, 999, 456]);
+	assert.match(sent[0].text, /✅ 已关闭: 123, 456/);
+	assert.match(sent[0].text, /❌ 999: 不在注册表中/);
+});
+
+test("#close 多 PID 含自己：其他先关，自己最后提示退出", async () => {
+	const { handler, calls, sent } = makeHandler({
+		closeInstance: async (pid) => {
+			calls.closeInstance.push(pid);
+			return pid === 888 ? { ok: true, self: true } : { ok: true };
+		},
+	});
+	await handler.tryHandle("#close 111 888", session);
+	assert.deepEqual(calls.closeInstance, [111, 888]);
+	assert.match(sent[0].text, /✅ 已关闭: 111/);
+	assert.match(sent[0].text, /正在关闭当前实例（888）/);
+});
+
+test("#instances 展示认领会话：名字优先、消息摘要 fallback、无认领", async () => {
+	const { handler, sent } = makeHandler({
+		getInstanceList: () => [
+			{
+				id: "111",
+				pid: 111,
+				role: "leader",
+				claimedSessions: ["c2c:aaa", "group:bbb"],
+				claimedSessionInfo: {
+					"c2c:aaa": { name: "小明", lastMsg: "帮我写代码", at: Date.now() - 5 * 60000 },
+					"group:bbb": { lastMsg: "这条消息特别特别长，已经远远超过了六十个字符的限制所以只能显示最前面的部分内容，后面更长的内容全部都要被截断掉不能显示出来啦" },
+				},
+				startedAt: 0,
+				heartbeatAt: 0,
+			},
+			{
+				id: "222",
+				pid: 222,
+				role: "follower",
+				claimedSessions: [],
+				startedAt: 0,
+				heartbeatAt: 0,
+			},
+		],
+	});
+	await handler.tryHandle("#instances", session);
+	const text = sent[0].text;
+	assert.match(text, /\*\*111\*\*.*leader/);
+	assert.match(text, /\*\*小明\*\*/); // 名字优先
+	assert.match(text, /💬 这条消息特别特别长/); // 无名字用消息摘要
+	assert.ok(!text.includes("不能显示出来啦")); // 已截断到 60
+	assert.match(text, /5分钟前/); // 相对时间
+	assert.match(text, /\(未认领会话\)/); // 无认领实例
+});
+
 test("#sessions 默认第 1 页，带页码时传对应页", async () => {
 	const { handler, sent } = makeHandler();
 	await handler.tryHandle("#sessions", session);

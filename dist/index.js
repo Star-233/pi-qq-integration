@@ -843,10 +843,14 @@ export default function (pi) {
             debug(`sendToQq 跳过: role=${_role}, api=${!!_api}`);
         }
     }
-    function claimSession(session) {
+    function claimSession(session, lastMsg) {
         const key = `${session.type}:${session.id}`;
+        const info = {
+            name: session.name?.trim() ? session.name.trim() : undefined,
+            lastMsg: lastMsg ? lastMsg.slice(0, DEFAULTS.SESSION_PREVIEW_LEN) : undefined,
+        };
         if (_role === "leader")
-            setClaim(_instanceId, key);
+            setClaim(_instanceId, key, info);
         else if (_role === "follower" && _ipcClient)
             _ipcClient.send({ type: "claim", sessionKey: key });
     }
@@ -920,7 +924,7 @@ export default function (pi) {
             };
             saveSettings(_settings);
         }
-        claimSession(qqMsg.session);
+        claimSession(qqMsg.session, qqMsg.content);
         debug(`收到 QQ 消息: [${qqMsg.session.type}] ${qqMsg.content.slice(0, DEFAULTS.CONTENT_PREVIEW_LEN)}`);
         const handled = _cmdHandler?.tryHandle(qqMsg.content, qqMsg.session);
         if (handled) {

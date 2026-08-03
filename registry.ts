@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync, renameSync, existsSync, chmodSync } from "node:fs";
-import type { InstanceEntry, QQRegistry } from "./types.js";
+import type { ClaimedSessionInfo, InstanceEntry, QQRegistry } from "./types.js";
 import { PATHS } from "./constants.js";
 
 const REGISTRY_PATH = PATHS.REGISTRY;
@@ -55,10 +55,13 @@ export function upsertInstance(entry: InstanceEntry): void {
 		entry.claimedSessions.length === 0 && existing?.claimedSessions?.length
 			? existing.claimedSessions
 			: entry.claimedSessions;
+	// 重连时同样保留认领展示信息（selfEntry 不携带 claimedSessionInfo）
+	const claimedSessionInfo = entry.claimedSessionInfo ?? existing?.claimedSessionInfo;
 	reg.instances[entry.id] = {
 		...existing,
 		...entry,
 		claimedSessions,
+		claimedSessionInfo,
 		heartbeatAt: Date.now(),
 	};
 	writeRegistry(reg);
@@ -74,19 +77,33 @@ export function removeInstance(id: string): void {
 	writeRegistry(reg);
 }
 
-export function setClaim(id: string, sessionKey: string): void {
+/**
+ * 认领会话（唯一所有者语义）。
+ * @param info 会话展示信息（名字/最近消息），写入 claimedSessionInfo 供 #instances 展示
+ */
+export function setClaim(id: string, sessionKey: string, info?: ClaimedSessionInfo): void {
 	const reg = readRegistry();
 	// 唯一所有者语义：先清除其他实例对该会话的认领，避免分裂脑
 	for (const inst of Object.values(reg.instances)) {
 		if (inst.id !== id) {
 			const idx = inst.claimedSessions.indexOf(sessionKey);
 			if (idx >= 0) inst.claimedSessions.splice(idx, 1);
+			// 同步清理被夺走的认领展示信息
+			if (inst.claimedSessionInfo) {
+				delete inst.claimedSessionInfo[sessionKey];
+			}
 		}
 	}
 	const inst = reg.instances[id];
 	if (!inst) return;
 	if (!inst.claimedSessions.includes(sessionKey)) {
 		inst.claimedSessions = [...inst.claimedSessions, sessionKey];
+	}
+	if (info) {
+		inst.claimedSessionInfo ??= {};
+		inst.claimedSessionInfo[sessionKey] = { ...info, at: Date.now() };
+	} else if (inst.claimedSessionInfo) {
+		delete inst.claimedSessionInfo[sessionKey];
 	}
 	writeRegistry(reg);
 }

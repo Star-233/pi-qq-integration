@@ -35,6 +35,8 @@ export const DEFAULTS = {
     SESSION_LIST_LIMIT: 20,
     /** #sessions 分页：每页条数 */
     SESSION_PAGE_SIZE: 10,
+    /** #sessions / #instances 认领展示：摘要截断长度 */
+    SESSION_PREVIEW_LEN: 60,
     /** #create spawn 新实例后等待其注册到 registry 的超时（ms） */
     SPAWN_WAIT_MS: 15_000,
     /** #close 发送 SIGTERM 后等待进程退出的时长（ms），超时则 SIGKILL */

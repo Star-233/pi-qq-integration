@@ -19,6 +19,16 @@ export interface QQBotConfig {
 
 export type QBRole = "leader" | "follower";
 
+/** 认领会话的展示信息（#instances 用）：名字优先，否则最近消息摘要 */
+export interface ClaimedSessionInfo {
+  /** QQ 会话 display name（来自消息事件） */
+  name?: string;
+  /** 该会话最近一条消息内容（截断后存储） */
+  lastMsg?: string;
+  /** 认领时间戳 */
+  at?: number;
+}
+
 export interface InstanceEntry {
   id: string;
   pid: number;
@@ -30,6 +40,8 @@ export interface InstanceEntry {
   startedAt: number;
   heartbeatAt: number;
   claimedSessions: string[];
+  /** 认领会话的展示信息（key = sessionKey，如 "c2c:xxx"） */
+  claimedSessionInfo?: Record<string, ClaimedSessionInfo>;
 }
 
 export interface QQRegistry {

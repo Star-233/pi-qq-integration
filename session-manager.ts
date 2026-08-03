@@ -291,7 +291,7 @@ export function createSessionManager() {
         const title = display.customName
           ? `**${display.customName}**`
           : display.lastUserMessage
-            ? `💬 ${display.lastUserMessage.slice(0, DEFAULTS.MSG_PREVIEW_LEN)}`
+            ? `💬 ${display.lastUserMessage.slice(0, DEFAULTS.SESSION_PREVIEW_LEN)}`
             : s.rawName;
         const mark = isCurrent ? "📌 " : "";
         const suffix = isCurrent ? "（当前）" : "";
@@ -324,7 +324,7 @@ export function createSessionManager() {
       const title = display.customName
         ? `**${display.customName}**`
         : display.lastUserMessage
-          ? `💬 ${display.lastUserMessage.slice(0, DEFAULTS.MSG_PREVIEW_LEN)}`
+          ? `💬 ${display.lastUserMessage.slice(0, DEFAULTS.SESSION_PREVIEW_LEN)}`
           : s.rawName;
       const mark = isCurrent ? "📌 " : "";
       const suffix = isCurrent ? "（当前）" : "";

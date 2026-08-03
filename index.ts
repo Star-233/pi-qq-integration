@@ -939,9 +939,13 @@ export default function (pi: ExtensionAPI) {
 		}
 	}
 
-	function claimSession(session: QBSession): void {
+	function claimSession(session: QBSession, lastMsg?: string): void {
 		const key = `${session.type}:${session.id}`;
-		if (_role === "leader") setClaim(_instanceId, key);
+		const info = {
+			name: session.name?.trim() ? session.name.trim() : undefined,
+			lastMsg: lastMsg ? lastMsg.slice(0, DEFAULTS.SESSION_PREVIEW_LEN) : undefined,
+		};
+		if (_role === "leader") setClaim(_instanceId, key, info);
 		else if (_role === "follower" && _ipcClient) _ipcClient.send({ type: "claim", sessionKey: key });
 	}
 
@@ -1011,7 +1015,7 @@ export default function (pi: ExtensionAPI) {
 			};
 			saveSettings(_settings);
 		}
-		claimSession(qqMsg.session);
+		claimSession(qqMsg.session, qqMsg.content);
 		debug(`收到 QQ 消息: [${qqMsg.session.type}] ${qqMsg.content.slice(0, DEFAULTS.CONTENT_PREVIEW_LEN)}`);
 
 		const handled = _cmdHandler?.tryHandle(qqMsg.content, qqMsg.session);

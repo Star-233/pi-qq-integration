@@ -173,19 +173,42 @@ export function createCommandHandler(api, sessionManager, callbacks) {
             await api.sendMarkdown(session, "❌ 当前实例不支持 #close");
             return;
         }
-        const pid = parseInt(arg.trim(), 10);
-        if (!Number.isInteger(pid) || pid <= 0) {
-            await api.sendText(session, "用法: `#close <实例ID>`（用 `#instances` 查看在线实例）");
+        const pids = arg
+            .trim()
+            .split(/\s+/)
+            .map((p) => parseInt(p, 10))
+            .filter((p) => Number.isInteger(p) && p > 0);
+        if (pids.length === 0) {
+            await api.sendText(session, "用法: `#close <实例ID> [实例ID ...]`（用 `#instances` 查看在线实例）");
             return;
         }
-        const result = await close(pid);
-        if (!result.ok) {
-            await api.sendMarkdown(session, `❌ 关闭失败: ${esc(result.error ?? "未知错误")}`);
-            return;
+        const closed = [];
+        const failed = [];
+        let selfPid = null;
+        for (const pid of pids) {
+            const result = await close(pid);
+            if (result.ok) {
+                if (result.self)
+                    selfPid = pid;
+                else
+                    closed.push(pid);
+            }
+            else {
+                failed.push({ pid, error: result.error ?? "未知错误" });
+            }
         }
-        if (result.self) {
-            // 关闭自己（leader 被 #close）：先回复再退出，剩余实例自动重新选举
-            await api.sendMarkdown(session, `🔄 正在关闭当前实例（${pid}），剩余实例将自动重新选举 leader ...`, undefined, { claim: false });
+        const lines = [];
+        if (closed.length > 0)
+            lines.push(`✅ 已关闭: ${closed.join(", ")}`);
+        if (selfPid !== null) {
+            lines.push(`🔄 正在关闭当前实例（${selfPid}），剩余实例将自动重新选举 leader ...`);
+        }
+        for (const f of failed)
+            lines.push(`❌ ${f.pid}: ${esc(f.error)}`);
+        const body = lines.join("\n") || "没有可关闭的实例";
+        if (selfPid !== null) {
+            // 关闭自己：先回复再退出，剩余实例自动重新选举
+            await api.sendMarkdown(session, body, undefined, { claim: false });
             setTimeout(() => {
                 try {
                     process.exit(0);
@@ -196,7 +219,7 @@ export function createCommandHandler(api, sessionManager, callbacks) {
             }, 2000);
             return;
         }
-        await api.sendMarkdown(session, `✅ 实例 **${pid}** 已关闭`);
+        await api.sendMarkdown(session, body);
     }
     async function cmdHistory(session, arg) {
         // 从当前 session 名读取
@@ -308,18 +331,50 @@ export function createCommandHandler(api, sessionManager, callbacks) {
         await api.sendMarkdown(session, `✅ 已将当前会话设为默认转发目标：\`${session.type}\` \`${session.id}\``);
     }
     /** 列出所有在线实例（含显示名/角色/认领数） */
+    /** 相对时间（#instances 认领会话展示用） */
+    function relTime(date) {
+        const diff = Date.now() - date;
+        const min = Math.floor(diff / 60000);
+        const hr = Math.floor(min / 60);
+        const day = Math.floor(hr / 24);
+        if (day > 0)
+            return day + "天前";
+        if (hr > 0)
+            return hr + "小时前";
+        if (min > 0)
+            return min + "分钟前";
+        return "刚刚";
+    }
     async function cmdInstances(session) {
         const list = callbacks.getInstanceList?.() ?? [];
         if (list.length === 0) {
             await api.sendMarkdown(session, "暂无在线实例");
             return;
         }
-        const lines = list.map((i) => {
-            const roleMark = i.role === "leader" ? "🔑 leader" : "👤 follower";
-            const claimed = i.claimedSessions?.length ?? 0;
-            const ref = i.name?.trim() ? `（${esc(i.name.trim())}）` : "";
-            return `- **${esc(i.id)}**${ref} — ${roleMark}，认领 ${claimed} 个会话`;
-        });
+        const lines = [];
+        for (const inst of list) {
+            const roleMark = inst.role === "leader" ? "🔑 leader" : "👤 follower";
+            const ref = inst.name?.trim() ? `（${esc(inst.name.trim())}）` : "";
+            lines.push(`- **${esc(inst.id)}**${ref} — ${roleMark}`);
+            // 认领会话：缩进 + 名字优先 / 最近消息摘要（60 字符截断）
+            const claimed = inst.claimedSessions ?? [];
+            const info = inst.claimedSessionInfo ?? {};
+            if (claimed.length === 0) {
+                lines.push("  - (未认领会话)");
+            }
+            else {
+                for (const key of claimed) {
+                    const c = info[key];
+                    const display = c?.name?.trim()
+                        ? `**${esc(c.name.trim())}**`
+                        : c?.lastMsg
+                            ? `💬 ${esc(c.lastMsg.slice(0, DEFAULTS.SESSION_PREVIEW_LEN))}`
+                            : `\`${esc(key.slice(0, 24))}\``;
+                    const ago = c?.at ? `（${relTime(c.at)}）` : "";
+                    lines.push(`  - ${display}${ago}`);
+                }
+            }
+        }
         await api.sendMarkdown(session, [
             "## 📋 在线实例",
             "",
