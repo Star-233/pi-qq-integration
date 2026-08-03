@@ -178,12 +178,25 @@ export function createWsClient(auth, options) {
             userId: raw.author.user_openid ?? raw.author.member_openid,
             msgId: raw.id,
         };
+        // 引用消息（message_type=103）：解析被引用消息索引与内容，供多实例定向路由
+        let refMsgIdx;
+        const ext = raw.message_scene?.ext ?? [];
+        for (const kv of ext) {
+            const eq = kv.indexOf("=");
+            if (eq > 0 && kv.slice(0, eq) === "ref_msg_idx") {
+                refMsgIdx = kv.slice(eq + 1);
+                break;
+            }
+        }
         return {
             id: raw.id,
             content: raw.content,
             session,
             timestamp: raw.timestamp,
             eventId: raw.id,
+            messageType: raw.message_type,
+            refMsgIdx,
+            refMsgContent: raw.msg_elements?.[0]?.content,
         };
     }
     function startHeartbeat() {

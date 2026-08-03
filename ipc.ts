@@ -16,7 +16,11 @@ export type IpcEnvelope =
 	// Settings 同步 IPC
 	| { type: "settings_request" }
 	| { type: "settings_update"; settings: QqSettings }
-	| { type: "settings_changed"; settings: QqSettings };
+	| { type: "settings_changed"; settings: QqSettings }
+	// 多实例定向（follower → leader）
+	| { type: "instance_update"; name: string }
+	| { type: "reroute"; sessionKey: string; targetId: string }
+	| { type: "inject"; session: QBSession; content: string };
 
 export interface IpcServerOptions {
 	onRegister?: (entry: InstanceEntry) => void;
@@ -27,6 +31,12 @@ export interface IpcServerOptions {
 	onSettingsRequest?: (instanceId: string) => void;
 	/** leader 要求 follower 执行 settings 变更 */
 	onSettingsUpdate?: (settings: QqSettings, instanceId: string) => void;
+	/** follower 上报显示名变化 */
+	onInstanceUpdate?: (name: string, instanceId: string) => void;
+	/** follower 请求把会话认领转给另一实例（#to 切换） */
+	onReroute?: (sessionKey: string, targetId: string, instanceId: string) => void;
+	/** follower 请求把内容注入某会话（#to <目标> <内容>） */
+	onInject?: (session: QBSession, content: string, instanceId: string) => void;
 }
 
 export function createIpcServer(sockPath: string, handlers: IpcServerOptions) {
@@ -79,6 +89,12 @@ export function createIpcServer(sockPath: string, handlers: IpcServerOptions) {
 						handlers.onSettingsRequest?.(id);
 					} else if (env.type === "settings_update" && id) {
 						handlers.onSettingsUpdate?.(env.settings, id);
+					} else if (env.type === "instance_update" && id) {
+						handlers.onInstanceUpdate?.(env.name, id);
+					} else if (env.type === "reroute" && id) {
+						handlers.onReroute?.(env.sessionKey, env.targetId, id);
+					} else if (env.type === "inject" && id) {
+						handlers.onInject?.(env.session, env.content, id);
 					}
 				} catch {
 					// 忽略坏行

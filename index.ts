@@ -20,13 +20,21 @@ import {
 	getLeaderSock,
 	pruneDead,
 	touchInstance,
+	readRegistry,
 } from "./registry.js";
 import { createAuthManager, type AuthManager } from "./auth.js";
 import { createWsClient, type WsClient } from "./ws-client.js";
 import { createApiClient, type ApiClient } from "./api-client.js";
 import { createSessionManager, type SessionManager } from "./session-manager.js";
 import { createCommandHandler } from "./command-handler.js";
-import type { InstanceEntry, QBSession, QBSessionType, QqSettings, SendMessageResponse } from "./types.js";
+import type {
+	InstanceEntry,
+	QQMessage,
+	QBSession,
+	QBSessionType,
+	QqSettings,
+	SendMessageResponse,
+} from "./types.js";
 import {
 	error as logError,
 	info,
@@ -37,6 +45,7 @@ import {
 	clearLog,
 } from "./logger.js";
 import { createRequire } from "node:module";
+import { hostname } from "node:os";
 import { PATHS, DEFAULTS, sessionTag } from "./constants.js";
 
 const require = createRequire(import.meta.url);
@@ -193,6 +202,10 @@ export default function (pi: ExtensionAPI) {
 	const _multi = loadMultiInstanceConfig();
 	let _role: "leader" | "follower" | null = null;
 	const _instanceId = _multi.instanceId;
+	/** 实例显示名 = 当前活跃 pi session 名（回退 hostname/instanceId），用于 QQ 端署名与 #to 定向 */
+	let _displayName: string = _instanceId;
+	/** leader 持有：发送消息索引(ref_idx) → 实例 id 映射，用于引用消息定向路由 */
+	const _refIdxMap = new Map<string, { instanceId: string; ts: number }>();
 	const _roleConfig = _multi.role;
 	let _ipcServer: ReturnType<typeof createIpcServer> | null = null;
 	let _ipcClient: ReturnType<typeof createIpcClient> | null = null;
@@ -240,10 +253,138 @@ export default function (pi: ExtensionAPI) {
 			id: _instanceId,
 			pid: process.pid,
 			role,
+			name: _displayName,
 			startedAt: Date.now(),
 			heartbeatAt: Date.now(),
 			claimedSessions: [],
 		};
+	}
+
+	// ── 实例显示名（= 当前活跃 pi session 名）──
+
+	/** 从 ctx 读取当前 pi session 名并刷新显示名（回退 hostname/instanceId） */
+	function updateDisplayName(ctx?: ExtensionContext): void {
+		let name: string | undefined;
+		try {
+			name = ctx?.sessionManager?.getSessionName?.()?.trim() || undefined;
+		} catch {
+			// 忽略
+		}
+		const next = name || hostname() || _instanceId;
+		if (next !== _displayName) {
+			_displayName = next;
+			info(`实例显示名更新: ${_displayName}`);
+			publishInstanceName();
+		}
+	}
+
+	/** 把当前显示名上报到 registry（leader 直接写，follower 经 IPC 给 leader） */
+	function publishInstanceName(): void {
+		if (_role === "leader") {
+			upsertInstance(selfEntry("leader"));
+		} else if (_role === "follower" && _ipcClient) {
+			_ipcClient.send({ type: "instance_update", name: _displayName });
+		}
+	}
+
+	/** 出站消息统一署名前缀，让 QQ 用户知道消息来自哪个实例 */
+	function decorate(text: string): string {
+		return `【${_displayName}】${text}`;
+	}
+
+	/** 从引用消息内容中提取实例署名（【名字】前缀），用于兜底路由 */
+	function extractBracketName(content: string): string | null {
+		const m = content.match(/^【([^】]+)】/);
+		return m ? m[1] : null;
+	}
+
+	// ── 引用消息定向路由（leader 持有 refIdxMap）──
+
+	const REF_IDX_TTL_MS = 60 * 60 * 1000; // 与被动消息有效期一致
+
+	/** 发送成功后记录 ref_idx → 实例，供用户引用该消息时定向路由 */
+	function trackSentRef(resp: SendMessageResponse | undefined, instanceId: string): void {
+		const refIdx = resp?.ext_info?.ref_idx;
+		if (refIdx) {
+			_refIdxMap.set(refIdx, { instanceId, ts: Date.now() });
+			if (_refIdxMap.size > 1000) pruneRefIdxMap();
+		}
+	}
+
+	function pruneRefIdxMap(): void {
+		const now = Date.now();
+		for (const [k, v] of _refIdxMap) {
+			if (now - v.ts > REF_IDX_TTL_MS) _refIdxMap.delete(k);
+		}
+	}
+
+	/** 解析引用消息应路由到的实例 id：ref_idx 精确映射优先，署名匹配兜底 */
+	function resolveRouteInstance(qqMsg: QQMessage): string | null {
+		if (qqMsg.refMsgIdx) {
+			const hit = _refIdxMap.get(qqMsg.refMsgIdx);
+			if (hit) {
+				if (Date.now() - hit.ts <= REF_IDX_TTL_MS) return hit.instanceId;
+				_refIdxMap.delete(qqMsg.refMsgIdx);
+			}
+		}
+		if (qqMsg.refMsgContent) {
+			const name = extractBracketName(qqMsg.refMsgContent);
+			if (name) {
+				for (const inst of Object.values(readRegistry().instances)) {
+					if (inst.name === name) return inst.id;
+				}
+			}
+		}
+		return null;
+	}
+
+	// ── 多实例定向辅助（#to / #instances）──
+
+	/** 先按 instanceId 精确匹配，再按显示名匹配；重名返回 null 由调用方提示 */
+	function resolveInstanceByName(target: string): InstanceEntry | null {
+		const reg = readRegistry();
+		const byId = reg.instances[target];
+		if (byId) return byId;
+		const matches = Object.values(reg.instances).filter((i) => i.name === target);
+		return matches.length === 1 ? matches[0] : null;
+	}
+
+	/** 把会话认领切换到目标实例（leader 直接改 registry，follower 经 IPC 请求） */
+	function rerouteSession(targetId: string, session: QBSession): boolean {
+		const key = `${session.type}:${session.id}`;
+		if (_role === "leader") {
+			const reg = readRegistry();
+			if (reg.instances[targetId] && (targetId === _instanceId || _ipcServer?.has(targetId))) {
+				setClaim(targetId, key);
+				return true;
+			}
+			return false;
+		}
+		if (_role === "follower" && _ipcClient) {
+			_ipcClient.send({ type: "reroute", sessionKey: key, targetId });
+			return true;
+		}
+		return false;
+	}
+
+	/** 把内容注入目标实例的会话（#to <实例> <内容>；leader 直接路由，follower 经 IPC） */
+	function injectContent(targetId: string, session: QBSession, content: string): void {
+		if (_role === "leader") {
+			if (targetId === _instanceId) {
+				handleInboundQqMessage({ session, content });
+			} else if (_ipcServer?.has(targetId)) {
+				_ipcServer.sendTo(targetId, {
+					type: "inbound",
+					session,
+					content,
+					fromTag: sessionTag(session.type),
+				});
+			}
+			return;
+		}
+		if (_role === "follower" && _ipcClient) {
+			_ipcClient.send({ type: "inject", session, content });
+		}
 	}
 
 	async function becomeLeader(ctx: ExtensionContext): Promise<void> {
@@ -278,7 +419,13 @@ export default function (pi: ExtensionAPI) {
 			});
 			_sm = createSessionManager();
 
-			_cmdHandler = createCommandHandler(_api, _sm, {
+			// 命令回复同样带实例署名（leader 直接发，包装 api 统一加前缀）
+			const leaderCmdApi: ApiClient = {
+				sendMarkdown: (s, md, r) => _api!.sendMarkdown(s, decorate(md), r),
+				sendText: (s, t, r) => _api!.sendText(s, decorate(t), r),
+				sendMessage: (s, t, o) => _api!.sendMessage(s, decorate(t), o),
+			};
+			_cmdHandler = createCommandHandler(leaderCmdApi, _sm, {
 				sendUserMessage: (text: string) => pi.sendUserMessage(text),
 				switchSession: () => {},
 				newSession: () => {},
@@ -292,6 +439,11 @@ export default function (pi: ExtensionAPI) {
 					_ipcServer?.broadcast({ type: "settings_changed", settings: _settings });
 				},
 				claimSession: (s: QBSession) => claimSession(s),
+				getInstanceList: () => Object.values(readRegistry().instances),
+				resolveInstance: (target) => resolveInstanceByName(target),
+				rerouteTo: (targetId, s) => rerouteSession(targetId, s),
+				injectTo: (targetId, s, c) => injectContent(targetId, s, c),
+				getClaimer: (s) => findClaimer(`${s.type}:${s.id}`),
 			});
 
 			_ws = createWsClient(_auth, {
@@ -302,7 +454,22 @@ export default function (pi: ExtensionAPI) {
 				},
 			});
 			_ws.onMessage((qqMsg) => {
-				const claimer = findClaimer(`${qqMsg.session.type}:${qqMsg.session.id}`);
+				const sessionKey = `${qqMsg.session.type}:${qqMsg.session.id}`;
+				// 引用消息（message_type=103）优先按被引用消息的来源实例路由
+				let claimer: InstanceEntry | null = null;
+				if (qqMsg.messageType === 103) {
+					const routedId = resolveRouteInstance(qqMsg);
+					if (routedId) {
+						const inst = readRegistry().instances[routedId];
+						if (inst && (routedId === _instanceId || _ipcServer?.has(routedId))) {
+							claimer = inst;
+							debug(`引用消息路由 -> 实例 ${inst.name ?? routedId} (ref=${qqMsg.refMsgIdx})`);
+						}
+					} else {
+						debug(`引用消息未命中路由，走默认认领 (ref=${qqMsg.refMsgIdx}, content=${qqMsg.refMsgContent?.slice(0, 30)})`);
+					}
+				}
+				if (!claimer) claimer = findClaimer(sessionKey);
 				if (claimer && claimer.id !== _instanceId && _ipcServer?.has(claimer.id)) {
 					const ok = _ipcServer.sendTo(claimer.id, {
 						type: "inbound",
@@ -311,7 +478,7 @@ export default function (pi: ExtensionAPI) {
 						fromTag: sessionTag(qqMsg.session.type),
 					});
 					if (ok) {
-						debug(`QQ 入站转发给 follower ${claimer.id}`);
+						debug(`QQ 入站转发给实例 ${claimer.name ?? claimer.id}`);
 						return;
 					}
 				}
@@ -325,10 +492,43 @@ export default function (pi: ExtensionAPI) {
 			_ipcServer = createIpcServer(LEADER_SOCK_PATH, {
 				onRegister: (entry) => upsertInstance(entry),
 				onClaim: (sessionKey, instanceId) => setClaim(instanceId, sessionKey),
-				onOutbound: (msg) => {
+				onOutbound: (msg, instanceId) => {
 					if (_api) {
-						_api.sendMarkdown(msg.target, msg.content, msg.replyTo).catch((e) => logError(`leader 转发失败: ${e}`));
+						_api.sendMarkdown(msg.target, msg.content, msg.replyTo)
+							.then((resp) => trackSentRef(resp, instanceId))
+							.catch((e) => logError(`leader 转发失败: ${e}`));
 					}
+				},
+				onInstanceUpdate: (name, instanceId) => {
+					const inst = readRegistry().instances[instanceId];
+					if (inst) {
+						upsertInstance({ ...inst, name });
+						debug(`实例 ${instanceId} 显示名更新: ${name}`);
+					}
+				},
+				onReroute: (sessionKey, targetId) => {
+					const reg = readRegistry();
+					const target = reg.instances[targetId];
+					if (target && (targetId === _instanceId || _ipcServer?.has(targetId))) {
+						setClaim(targetId, sessionKey);
+						debug(`会话 ${sessionKey} 认领已切换到实例 ${target.name ?? targetId}`);
+					} else {
+						logError(`reroute 目标实例不可用: ${targetId}`);
+					}
+				},
+				onInject: (session, content) => {
+					const sessionKey = `${session.type}:${session.id}`;
+					const claimer = findClaimer(sessionKey);
+					if (claimer && claimer.id !== _instanceId && _ipcServer?.has(claimer.id)) {
+						_ipcServer.sendTo(claimer.id, {
+							type: "inbound",
+							session,
+							content,
+							fromTag: sessionTag(session.type),
+						});
+						return;
+					}
+					handleInboundQqMessage({ session, content });
 				},
 				onDisconnect: (instanceId) => {
 					debug(`follower ${instanceId} 连接断开（保留认领，待重连恢复）`);
@@ -421,6 +621,11 @@ export default function (pi: ExtensionAPI) {
 				}
 			},
 			claimSession: (s: QBSession) => claimSession(s),
+			getInstanceList: () => Object.values(readRegistry().instances),
+			resolveInstance: (target) => resolveInstanceByName(target),
+			rerouteTo: (targetId, s) => rerouteSession(targetId, s),
+			injectTo: (targetId, s, c) => injectContent(targetId, s, c),
+			getClaimer: (s) => findClaimer(`${s.type}:${s.id}`),
 		});
 
 		tryFollower(ctx);
@@ -480,14 +685,16 @@ export default function (pi: ExtensionAPI) {
 		replyTo?: { msgId?: string; eventId?: string },
 	): Promise<void> {
 		claimSession(target);
+		const signed = decorate(content);
 		if (_role === "leader" && _api) {
 			try {
-				await _api.sendMarkdown(target, content, replyTo);
+				const resp = await _api.sendMarkdown(target, signed, replyTo);
+				trackSentRef(resp, _instanceId);
 			} catch (err) {
 				logError(`回复发送失败: ${err}`);
 			}
 		} else if (_role === "follower" && _ipcClient) {
-			_ipcClient.send({ type: "outbound", target, content, replyTo });
+			_ipcClient.send({ type: "outbound", target, content: signed, replyTo });
 		} else {
 			debug(`sendToQq 跳过: role=${_role}, api=${!!_api}`);
 		}
@@ -826,7 +1033,9 @@ async function disconnect(ctx: ExtensionContext): Promise<void> {
 
 	// ── 事件 ──
 
-	pi.on("session_start", async (_event, ctx) => {
+	pi.on("session_start", async (event, ctx) => {
+		// 刷新实例显示名（当前活跃 pi session 名）
+		updateDisplayName(ctx);
 		// 启动自动连接（默认开启，可用配置 autoConnect:false 关闭）
 		const autoConnect = config.autoConnect ?? true;
 		if (!autoConnect) {
@@ -842,6 +1051,11 @@ async function disconnect(ctx: ExtensionContext): Promise<void> {
 		} catch (err) {
 			logError(`自动连接失败: ${err}`);
 		}
+	});
+
+	// 用户重命名/切换 session 后更新实例显示名并同步 registry
+	pi.on("session_info_changed", (event, ctx) => {
+		updateDisplayName(ctx);
 	});
 
 	// 转发桌面端用户消息到 QQ

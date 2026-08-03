@@ -1,6 +1,6 @@
 import type { ApiClient } from "./api-client.js";
 import type { SessionManager } from "./session-manager.js";
-import type { QBSession, QqSettings } from "./types.js";
+import type { InstanceEntry, QBSession, QqSettings } from "./types.js";
 import { debug, info } from "./logger.js";
 import { DEFAULTS } from "./constants.js";
 
@@ -24,6 +24,12 @@ export function createCommandHandler(
     getSettings: () => QqSettings;
     updateSettings: (update: Partial<QqSettings>) => void;
     claimSession?: (session: QBSession) => void;
+    // 多实例：实例列表 / 解析 / 定向路由
+    getInstanceList?: () => InstanceEntry[];
+    resolveInstance?: (target: string) => InstanceEntry | null;
+    rerouteTo?: (targetId: string, session: QBSession) => boolean;
+    injectTo?: (targetId: string, session: QBSession, content: string) => void;
+    getClaimer?: (session: QBSession) => InstanceEntry | null;
   }
 ) {
   /**
@@ -76,6 +82,15 @@ export function createCommandHandler(
         await cmdTarget(from);
         return true;
 
+      case "instances":
+      case "instance":
+        await cmdInstances(from);
+        return true;
+
+      case "to":
+        await cmdTo(from, args);
+        return true;
+
       default:
         // 未知命令，不作为 prompt 处理
         await api.sendMarkdown(
@@ -105,6 +120,8 @@ export function createCommandHandler(
         "| `#history [N]` | 查看最近 N 条消息 (默认 5) |",
         "| `#settings` | 查看/修改转发设置 |",
         "| `#target` | 将当前 QQ 会话设为默认转发目标 |",
+        "| `#instances` | 列出所有在线 pi 实例 |",
+        "| `#to <实例> [内容]` | 切换当前会话到指定实例（带内容则定向发送） |",
       ].join("\n")
     );
   }
@@ -285,6 +302,89 @@ export function createCommandHandler(
       session,
       `✅ 已将当前会话设为默认转发目标：\`${session.type}\` \`${session.id}\``
     );
+  }
+
+  /** 列出所有在线实例（含显示名/角色/认领数） */
+  async function cmdInstances(session: QBSession): Promise<void> {
+    const list = callbacks.getInstanceList?.() ?? [];
+    if (list.length === 0) {
+      await api.sendMarkdown(session, "暂无在线实例");
+      return;
+    }
+    const lines = list.map((i) => {
+      const roleMark = i.role === "leader" ? "🔑 leader" : "👤 follower";
+      const claimed = i.claimedSessions?.length ?? 0;
+      const name = i.name?.trim() || i.id;
+      return `- **${esc(name)}** — ${roleMark}，认领 ${claimed} 个会话（\`${i.id}\`）`;
+    });
+    await api.sendMarkdown(
+      session,
+      ["## 📋 在线实例", "", "用 `#to <实例名>` 将当前会话切换到指定实例", "", ...lines].join("\n")
+    );
+  }
+
+  /** 切换/定向实例：`#to` 查看绑定，`#to <实例> [内容]` 切换并可选定向发送 */
+  async function cmdTo(session: QBSession, arg: string): Promise<void> {
+    const parts = arg.trim().split(/\s+/);
+
+    if (!parts[0]) {
+      // 查看当前绑定
+      const claimer = callbacks.getClaimer?.(session);
+      if (claimer) {
+        const name = claimer.name?.trim() || claimer.id;
+        await api.sendMarkdown(
+          session,
+          `当前会话由实例 **${esc(name)}** 处理。\n用 \`#to <实例名>\` 切换。`
+        );
+      } else {
+        await api.sendMarkdown(
+          session,
+          "当前会话未绑定实例（默认由最后活跃实例处理）。用 `#instances` 查看可定向的实例。"
+        );
+      }
+      return;
+    }
+
+    // 实例名可能含空格：从长到短匹配最长前缀，剩余作为内容
+    let entry: InstanceEntry | null = null;
+    let content = "";
+    for (let i = parts.length; i >= 1; i--) {
+      const candidate = parts.slice(0, i).join(" ");
+      const e = callbacks.resolveInstance?.(candidate);
+      if (e) {
+        entry = e;
+        content = parts.slice(i).join(" ");
+        break;
+      }
+    }
+
+    if (!entry) {
+      await api.sendMarkdown(
+        session,
+        `实例 \`${esc(parts[0])}\` 不存在、离线或重名。用 \`#instances\` 查看在线实例。`
+      );
+      return;
+    }
+
+    const ok = callbacks.rerouteTo?.(entry.id, session);
+    if (!ok) {
+      await api.sendMarkdown(session, "❌ 切换失败：IPC 未连接或实例不可用，请稍后重试。");
+      return;
+    }
+
+    const displayName = entry.name?.trim() || entry.id;
+    if (content) {
+      callbacks.injectTo?.(entry.id, session, content);
+      await api.sendMarkdown(
+        session,
+        `✅ 已切换到实例 **${esc(displayName)}**，你的消息已送达：\`${esc(content.slice(0, 50))}\``
+      );
+    } else {
+      await api.sendMarkdown(
+        session,
+        `✅ 当前会话已切换到实例 **${esc(displayName)}**，之后的回复将路由到该实例。`
+      );
+    }
   }
 
   return { tryHandle };

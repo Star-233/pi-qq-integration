@@ -23,6 +23,8 @@ export interface InstanceEntry {
   id: string;
   pid: number;
   role: QBRole;
+  /** 实例显示名 = 当前活跃 pi session 名（供 QQ 端署名 / #to 定向） */
+  name?: string;
   piSession?: string;
   sockPath?: string;
   startedAt: number;
@@ -96,6 +98,12 @@ export interface MessageCreateEvent {
   guild_id?: string;
   group_openid?: string;
   group_id?: string;
+  /** 消息内容类型: 0=文本, 3=卡片, 101=并行, 102=聊天记录, 103=引用消息 */
+  message_type?: number;
+  /** 消息场景上下文：ext 为 key=value 数组，含 msg_idx / ref_msg_idx=REFIDX_xxx */
+  message_scene?: { source?: string; ext?: string[] };
+  /** 引用消息时包含被引用内容（[0] 为被引用的原始消息） */
+  msg_elements?: { msg_idx?: string; content?: string; message_type?: number }[];
 }
 
 export interface GroupAddRobotEvent {
@@ -130,6 +138,8 @@ export interface SendMessageRequest {
 export interface SendMessageResponse {
   id: string;
   timestamp: string;
+  /** 扩展信息。ref_idx 为引用消息索引，对应后续引用该消息事件的 ref_msg_idx */
+  ext_info?: { ref_idx?: string };
 }
 
 // ── Internal ──
@@ -152,6 +162,12 @@ export interface QQMessage {
   session: QBSession;
   timestamp: string;
   eventId?: string;    // 事件 ID（用于被动消息回复）
+  /** 消息内容类型: 103=引用消息 */
+  messageType?: number;
+  /** 被引用消息索引（REFIDX_xxx），引用消息时从 message_scene.ext 的 ref_msg_idx 解析 */
+  refMsgIdx?: string;
+  /** 被引用消息内容（msg_elements[0].content），用于署名兜底路由 */
+  refMsgContent?: string;
 }
 
 // ── QQ Bot 转发设置 ──

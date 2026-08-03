@@ -61,6 +61,15 @@ export function createIpcServer(sockPath, handlers) {
                     else if (env.type === "settings_update" && id) {
                         handlers.onSettingsUpdate?.(env.settings, id);
                     }
+                    else if (env.type === "instance_update" && id) {
+                        handlers.onInstanceUpdate?.(env.name, id);
+                    }
+                    else if (env.type === "reroute" && id) {
+                        handlers.onReroute?.(env.sessionKey, env.targetId, id);
+                    }
+                    else if (env.type === "inject" && id) {
+                        handlers.onInject?.(env.session, env.content, id);
+                    }
                 }
                 catch {
                     // 忽略坏行

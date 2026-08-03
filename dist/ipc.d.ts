@@ -30,6 +30,17 @@ export type IpcEnvelope = {
 } | {
     type: "settings_changed";
     settings: QqSettings;
+} | {
+    type: "instance_update";
+    name: string;
+} | {
+    type: "reroute";
+    sessionKey: string;
+    targetId: string;
+} | {
+    type: "inject";
+    session: QBSession;
+    content: string;
 };
 export interface IpcServerOptions {
     onRegister?: (entry: InstanceEntry) => void;
@@ -42,6 +53,12 @@ export interface IpcServerOptions {
     onSettingsRequest?: (instanceId: string) => void;
     /** leader 要求 follower 执行 settings 变更 */
     onSettingsUpdate?: (settings: QqSettings, instanceId: string) => void;
+    /** follower 上报显示名变化 */
+    onInstanceUpdate?: (name: string, instanceId: string) => void;
+    /** follower 请求把会话认领转给另一实例（#to 切换） */
+    onReroute?: (sessionKey: string, targetId: string, instanceId: string) => void;
+    /** follower 请求把内容注入某会话（#to <目标> <内容>） */
+    onInject?: (session: QBSession, content: string, instanceId: string) => void;
 }
 export declare function createIpcServer(sockPath: string, handlers: IpcServerOptions): {
     ready: Promise<void>;
