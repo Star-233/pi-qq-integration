@@ -1,0 +1,49 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号（如 0.5.1，不含 v 前缀）"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 类型检查 + 测试
+        run: npm run typecheck && npm test
+
+      - name: 提取 CHANGELOG 版本段
+        id: changelog
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: node scripts/extract-changelog-notes.mjs
+
+      - name: 创建 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: v${{ fromJSON(steps.changelog.outputs.version) }}
+          body: ${{ fromJSON(steps.changelog.outputs.notes) }}
+          generate_release_notes: false
+
+      - name: 发布到 npm
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
