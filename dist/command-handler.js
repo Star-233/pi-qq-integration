@@ -135,7 +135,7 @@ export function createCommandHandler(api, sessionManager, callbacks) {
     async function cmdCreate(session, arg) {
         const spawn = callbacks.spawnInstance;
         if (!spawn) {
-            await api.sendMarkdown(session, "❌ 当前实例不支持 #create（仅 leader 可创建新实例）");
+            await api.sendMarkdown(session, "❌ 当前实例不支持 #create");
             return;
         }
         const trimmed = arg.trim();
