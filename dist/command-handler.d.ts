@@ -18,6 +18,7 @@ export declare function createCommandHandler(api: ApiClient, sessionManager: Ses
     rerouteTo?: (targetId: string, session: QBSession) => boolean;
     injectTo?: (targetId: string, session: QBSession, content: string) => void;
     getClaimer?: (session: QBSession) => InstanceEntry | null;
+    getCurrentSessionFile?: () => string | null;
 }): {
     tryHandle: (text: string, from: QBSession) => Promise<boolean>;
 };

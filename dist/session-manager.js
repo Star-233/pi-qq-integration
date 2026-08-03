@@ -102,6 +102,42 @@ export function createSessionManager() {
         }
     }
     /**
+     * 解析 session 文件内容，取最后 N 条 user/assistant 对话（供 #history 使用）
+     */
+    function parseSessionFile(raw, maxMessages) {
+        const allEntries = [];
+        for (const line of raw.trim().split("\n")) {
+            try {
+                const parsed = JSON.parse(line);
+                // 只处理 message 类型，跳过 custom 等
+                if (parsed.type !== "message")
+                    continue;
+                const msg = parsed.message ?? parsed;
+                const role = msg.role ?? "";
+                if (role !== "user" && role !== "assistant")
+                    continue;
+                // 跳过空的 assistant 消息（tool call 占位符）
+                if (role === "assistant" && !extractText(msg).trim())
+                    continue;
+                allEntries.push({ role, text: extractText(msg) });
+            }
+            catch {
+                // 跳过解析失败的行
+            }
+        }
+        // 取最后 N 条 user/assistant 对话
+        const recent = allEntries.slice(-maxMessages);
+        if (recent.length === 0)
+            return "(无可显示的消息)";
+        return recent
+            .map((e) => {
+            const label = e.role === "user" ? "👤" : "🤖";
+            const text = e.text.slice(0, DEFAULTS.MSG_PREVIEW_LEN);
+            return `${label} ${text}`;
+        })
+            .join("\n\n");
+    }
+    /**
      * 获取 session 前 N 条消息（用于 /history）
      */
     function getSessionPreview(sessionName, maxMessages = 10) {
@@ -113,37 +149,20 @@ export function createSessionManager() {
             if (!match)
                 return "Session 不存在";
             const raw = readFileSync(match.path, "utf-8");
-            const allEntries = [];
-            for (const line of raw.trim().split("\n")) {
-                try {
-                    const parsed = JSON.parse(line);
-                    // 只处理 message 类型，跳过 custom 等
-                    if (parsed.type !== "message")
-                        continue;
-                    const msg = parsed.message ?? parsed;
-                    const role = msg.role ?? "";
-                    if (role !== "user" && role !== "assistant")
-                        continue;
-                    // 跳过空的 assistant 消息（tool call 占位符）
-                    if (role === "assistant" && !extractText(msg).trim())
-                        continue;
-                    allEntries.push({ role, text: extractText(msg) });
-                }
-                catch {
-                    // 跳过解析失败的行
-                }
-            }
-            // 取最后 N 条 user/assistant 对话
-            const recent = allEntries.slice(-maxMessages);
-            if (recent.length === 0)
-                return "(无可显示的消息)";
-            return recent
-                .map((e) => {
-                const label = e.role === "user" ? "👤" : "🤖";
-                const text = e.text.slice(0, DEFAULTS.MSG_PREVIEW_LEN);
-                return `${label} ${text}`;
-            })
-                .join("\n\n");
+            return parseSessionFile(raw, maxMessages);
+        }
+        catch {
+            return "(无法读取)";
+        }
+    }
+    /**
+     * 按 session 文件路径读取最近 N 条消息（#history 多实例场景：
+     * 直接读当前实例的 session 文件，而不是全局按修改时间猜最近 session）
+     */
+    function getSessionFilePreview(filePath, maxMessages = 10) {
+        try {
+            const raw = readFileSync(filePath, "utf-8");
+            return parseSessionFile(raw, maxMessages);
         }
         catch {
             return "(无法读取)";
@@ -165,5 +184,5 @@ export function createSessionManager() {
         })
             .join("\n");
     }
-    return { listSessions, getSessionPreview, formatSessionList };
+    return { listSessions, getSessionPreview, getSessionFilePreview, formatSessionList };
 }

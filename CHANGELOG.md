@@ -9,6 +9,10 @@
   - `ipc.test.mjs` — IPC 真实 socket 收发/同 id 重连接管/非法注册断开
 - 纯逻辑抽离到独立模块：`validation.ts`（校验）、`routing.ts`（路由），index.ts 直接 import（不再测试逻辑副本）
 
+## 0.5.2
+
+- 修复：`#history` 在多实例下展示错误实例的消息——原实现取「全局最近修改」的 session 文件（可能属于其他实例，导致看到的不是当前实例的对话）；改为通过当前实例的 `sessionManager.getSessionFile()` 定向读取本实例的 session 历史（session 切换后自动指向新文件）；拿不到时回退旧逻辑
+
 ## 0.5.1
 
 - 新增 GitHub Actions 自动发布 workflow（`.github/workflows/release.yml`）：push `v*` tag 后自动执行 typecheck + test、从 CHANGELOG 提取对应版本段创建 **GitHub Release**、`npm publish` 发布到 npm（首次需在仓库 Secrets 配置 `NPM_TOKEN`；也可手动 `workflow_dispatch` 触发）

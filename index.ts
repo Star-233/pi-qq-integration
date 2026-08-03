@@ -217,6 +217,8 @@ export default function (pi: ExtensionAPI) {
 	const _instanceId = _multi.instanceId;
 	/** 当前活跃 pi session 名（仅作为用户参考展示，不参与区分/路由；区分实例统一用 _instanceId） */
 	let _sessionRef: string = "";
+	/** 当前实例的 pi sessionManager 引用（#history 多实例场景：实时读当前实例 session 文件，而非全局最近 session） */
+	let _sessionManagerRef: { getSessionFile(): string | undefined } | null = null;
 	/** leader 持有：发送消息索引(ref_idx) → 实例 id 映射，用于引用消息定向路由 */
 	const _refIdxMap: RefIdxMap = new Map();
 	const _roleConfig = _multi.role;
@@ -465,6 +467,7 @@ export default function (pi: ExtensionAPI) {
 				rerouteTo: (targetId, s) => rerouteSession(targetId, s),
 				injectTo: (targetId, s, c) => injectContent(targetId, s, c),
 				getClaimer: (s) => findClaimer(`${s.type}:${s.id}`),
+				getCurrentSessionFile: () => (_sessionManagerRef?.getSessionFile() ?? null),
 			});
 
 			_ws = createWsClient(_auth, {
@@ -691,6 +694,7 @@ export default function (pi: ExtensionAPI) {
 			rerouteTo: (targetId, s) => rerouteSession(targetId, s),
 			injectTo: (targetId, s, c) => injectContent(targetId, s, c),
 			getClaimer: (s) => findClaimer(`${s.type}:${s.id}`),
+			getCurrentSessionFile: () => (_sessionManagerRef?.getSessionFile() ?? null),
 		});
 
 		tryFollower(ctx);
@@ -1159,6 +1163,8 @@ async function disconnect(ctx: ExtensionContext): Promise<void> {
 	pi.on("session_start", async (event, ctx) => {
 		// 刷新实例 session 参考名（当前活跃 pi session 名，仅展示用）
 		updateSessionRef(ctx);
+		// 持有当前实例的 sessionManager 引用（供 #history 定向读取；切换 session 后 getSessionFile 自动指向新文件）
+		_sessionManagerRef = ctx.sessionManager;
 		// 启动自动连接（默认开启，可用配置 autoConnect:false 关闭）
 		const autoConnect = config.autoConnect ?? true;
 		if (!autoConnect) {

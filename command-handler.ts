@@ -33,6 +33,8 @@ export function createCommandHandler(
     rerouteTo?: (targetId: string, session: QBSession) => boolean;
     injectTo?: (targetId: string, session: QBSession, content: string) => void;
     getClaimer?: (session: QBSession) => InstanceEntry | null;
+    // 当前实例的 pi session 文件路径（#history 多实例场景：读当前实例而非全局最近 session）
+    getCurrentSessionFile?: () => string | null;
   }
 ) {
   /**
@@ -196,7 +198,17 @@ export function createCommandHandler(
     // 从当前 session 名读取
     const n = parseInt(arg, 10) || DEFAULTS.HISTORY_DEFAULT;
 
-    // 获取当前 session 的信息 - 通过扫描找到最新的 session
+    // 多实例：优先读当前实例的 session 文件（处理这条命令的实例），
+    // 避免 listSessions()[0]（全局最近修改）取到其他实例的 session
+    const currentFile = callbacks.getCurrentSessionFile?.();
+    if (currentFile) {
+      const preview = sessionManager.getSessionFilePreview(currentFile, n);
+      debug(`#history: file=${currentFile}, count=${n}`);
+      await api.sendMarkdown(session, [`## 📝 最近消息 (当前实例)`, "", preview].join("\n"));
+      return;
+    }
+
+    // 回退：按最近修改的 session 读取
     const sessions = sessionManager.listSessions();
     if (sessions.length === 0) {
       await api.sendText(session, "暂无 session");
