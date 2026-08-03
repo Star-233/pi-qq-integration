@@ -305,7 +305,7 @@ export default function (pi: ExtensionAPI) {
 	/** 出站消息统一署名前缀：session 名-PID（无 hostname），引用块格式与正文分隔 */
 	function decorate(text: string): string {
 		const id = _sessionRef ? `${_sessionRef}-${_instanceId}` : _instanceId;
-		return `> 【${id}】\n${text}`;
+		return `> 【${id}】\n\n${text}`;
 	}
 
 	// ── 引用消息定向路由（leader 持有 refIdxMap）──
