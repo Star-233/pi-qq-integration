@@ -99,7 +99,7 @@ export function createCommandHandler(api, sessionManager, callbacks) {
             await api.sendText(session, "用法: `#resume <序号|名称>`");
             return;
         }
-        const sessions = sessionManager.listSessions();
+        const sessions = sessionManager.listSessions(callbacks.getCwd?.() ?? undefined);
         let match;
         // 支持按序号匹配: #resume 1
         const idx = parseInt(arg, 10);
@@ -116,7 +116,11 @@ export function createCommandHandler(api, sessionManager, callbacks) {
             await api.sendMarkdown(session, `Session \`${esc(arg)}\` 不存在。用 \`#sessions\` 查看所有可用 session。`);
             return;
         }
-        await api.sendMarkdown(session, `请在 pi 终端中输入 \`/resume ${match.rawName}\` 切换 session`);
+        // 真正执行切换（index.ts 的 callbacks.switchSession 直接调 sessionManager.setSessionFile）
+        const ok = callbacks.switchSession(match.path);
+        await api.sendMarkdown(session, ok
+            ? `✅ 已切换到 session \`${esc(match.rawName)}\``
+            : `❌ 切换失败（当前实例无 sessionManager 引用，请在 pi 终端执行 \`/resume ${esc(match.rawName)}\`）`);
     }
     async function cmdNew(session) {
         // 真正执行 newSession（index.ts 的 callbacks.newSession 直接调 sessionManager.newSession）

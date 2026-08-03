@@ -21,7 +21,7 @@ export function createCommandHandler(
   sessionManager: SessionManager,
   callbacks: {
     sendUserMessage: (text: string) => void;
-    switchSession: (name: string) => void;
+    switchSession: (path: string) => boolean;
     newSession: () => boolean;
     clearSession: () => void;
     getSettings: () => QqSettings;
@@ -154,7 +154,7 @@ export function createCommandHandler(
       return;
     }
 
-    const sessions = sessionManager.listSessions();
+    const sessions = sessionManager.listSessions(callbacks.getCwd?.() ?? undefined);
     let match: (typeof sessions)[0] | undefined;
 
     // 支持按序号匹配: #resume 1
@@ -179,9 +179,13 @@ export function createCommandHandler(
       return;
     }
 
+    // 真正执行切换（index.ts 的 callbacks.switchSession 直接调 sessionManager.setSessionFile）
+    const ok = callbacks.switchSession(match.path);
     await api.sendMarkdown(
       session,
-      `请在 pi 终端中输入 \`/resume ${match.rawName}\` 切换 session`
+      ok
+        ? `✅ 已切换到 session \`${esc(match.rawName)}\``
+        : `❌ 切换失败（当前实例无 sessionManager 引用，请在 pi 终端执行 \`/resume ${esc(match.rawName)}\`）`
     );
   }
 

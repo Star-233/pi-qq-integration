@@ -151,8 +151,8 @@ export default function (pi) {
     let _sessionManagerRef = null;
     /**
      * QQ #new 真正执行：hack 直接调 sessionManager.newSession()。
-     * pi 扩展 API 未暴露 newSession（仅在终端命令处理器可用），运行时对象有该方法；
-     * 注意绕过命令流程可能状态不一致，实测有问题则回退为终端提示。
+     * pi 扩展 API 未暴露 newSession（仅在终端命令处理器可用），运行时对象有该方法
+     * （同步方法，返回新 session 文件路径）；注意绕过命令流程可能状态不一致，实测有问题则回退。
      */
     function executeNewSession() {
         const sm = _sessionManagerRef;
@@ -160,9 +160,35 @@ export default function (pi) {
             logError("QQ #new: 当前实例无 sessionManager 引用，无法创建新 session");
             return false;
         }
-        sm.newSession().catch((err) => logError(`QQ #new 执行失败: ${err}`));
-        info("QQ #new: 已调用 sessionManager.newSession()");
-        return true;
+        try {
+            const newFile = sm.newSession();
+            info(`QQ #new: 已创建新 session → ${newFile}`);
+            return true;
+        }
+        catch (err) {
+            logError(`QQ #new 执行失败: ${err}`);
+            return false;
+        }
+    }
+    /**
+     * QQ #resume 真正执行：hack 直接调 sessionManager.setSessionFile(path)。
+     * 同样绕过命令流程（agent 内存上下文不会加载目标 session 历史），实测有问题则回退。
+     */
+    function executeSwitchSession(path) {
+        const sm = _sessionManagerRef;
+        if (!sm?.setSessionFile) {
+            logError("QQ #resume: 当前实例无 sessionManager 引用，无法切换 session");
+            return false;
+        }
+        try {
+            sm.setSessionFile(path);
+            info(`QQ #resume: 已切换到 session → ${path}`);
+            return true;
+        }
+        catch (err) {
+            logError(`QQ #resume 执行失败: ${err}`);
+            return false;
+        }
     }
     /** leader 持有：发送消息索引(ref_idx) → 实例 id 映射，用于引用消息定向路由 */
     const _refIdxMap = new Map();
@@ -380,7 +406,7 @@ export default function (pi) {
             };
             _cmdHandler = createCommandHandler(leaderCmdApi, _sm, {
                 sendUserMessage: (text) => pi.sendUserMessage(text),
-                switchSession: () => { },
+                switchSession: (path) => executeSwitchSession(path),
                 newSession: () => executeNewSession(),
                 clearSession: () => { },
                 getSettings: () => _settings,
@@ -594,7 +620,7 @@ export default function (pi) {
         _sm = createSessionManager();
         _cmdHandler = createCommandHandler(followerApi, _sm, {
             sendUserMessage: (text) => pi.sendUserMessage(text),
-            switchSession: () => { },
+            switchSession: (path) => executeSwitchSession(path),
             newSession: () => executeNewSession(),
             clearSession: () => { },
             getSettings: () => _settings,

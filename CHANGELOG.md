@@ -13,7 +13,7 @@
 
 - 修复：`#history` 在多实例下展示错误实例的消息——原实现取「全局最近修改」的 session 文件（可能属于其他实例，导致看到的不是当前实例的对话）；改为通过当前实例的 `sessionManager.getSessionFile()` 定向读取本实例的 session 历史（session 切换后自动指向新文件）；拿不到时回退旧逻辑
 - 修复：`#sessions` 只显示**当前工作目录**下的 session（多实例共享 sessions 目录时不再混入其他项目的会话）；展示格式改为「自定义名（/rename）优先，否则最后一条用户消息摘要」+ 相对时间，并标记当前实例活跃的 session（📌 当前）
-- 修复：`#new` 真正执行创建新 session（hack 直接调 `sessionManager.newSession()`，pi 扩展 API 未暴露该方法；实测有问题则回退为终端提示）
+- 修复：`#new` 真正执行创建新 session（hack 直接调同步方法 `sessionManager.newSession()`，pi 扩展 API 未暴露；首次实现误用 Promise.catch 导致 TypeError，已修复）；`#resume` 同样真正执行切换（`sessionManager.setSessionFile(path)`），不再提示终端手动操作。均绕过命令流程可能状态不一致，实测有问题则回退
 
 ## 0.5.1
 

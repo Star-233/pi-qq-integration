@@ -7,7 +7,7 @@ import type { InstanceEntry, QBSession, QqSettings } from "./types.js";
  */
 export declare function createCommandHandler(api: ApiClient, sessionManager: SessionManager, callbacks: {
     sendUserMessage: (text: string) => void;
-    switchSession: (name: string) => void;
+    switchSession: (path: string) => boolean;
     newSession: () => boolean;
     clearSession: () => void;
     getSettings: () => QqSettings;
