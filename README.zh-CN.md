@@ -169,15 +169,15 @@ QQ 用户
 | 命令 | 说明 |
 |------|------|
 | `#help` | 显示帮助 |
-| `#sessions` | 列出最近 pi session（最多 20 个） |
-| `#resume <序号/名称>` | 切换到指定 session |
-| `#new` | 创建新 session |
+| `#sessions [页码]` | 跨项目列出全部 session，每页 10 条，最近使用在前 |
 | `#history [N]` | 查看最近活跃 session 的最近 N 条消息（默认 5） |
-| `#clear` | 压缩当前 session |
 | `#target` | 将当前 QQ 会话设为默认转发目标 |
 | `#settings` | 查看/修改转发设置（`#setting` 为别名） |
-| `#instances` | 列出在线实例（实例 ID、pi session 名、角色、认领会话数） |
+| `#instances` | 列出在线实例（ID、角色、认领会话的名字/最近消息摘要） |
 | `#to <PID/名称> [内容]` | 查看当前绑定实例 / 切换会话到指定实例 / 向指定实例定向发送内容 |
+| `#create <序号/名称>` | 创建新实例并复用指定 session |
+| `#create new [--dir <目录>]` | 创建全新 session 的新实例（可指定工作目录）|
+| `#close <实例ID> [实例ID...]` | 关闭实例（支持空格分隔多个 PID） |
 
 ### 桌面端消息转发
 
@@ -268,7 +268,7 @@ pi-qq-integration/
 
 1. **Token 安全** — Token 有效期约 2 小时，自动刷新。连续 3 次刷新失败后自动断开并通知。
 2. **消息频率** — 主动消息每月每用户/群限 4 条（QQ 官方平台限制），被动回复较宽松。
-3. **Session 管理** — session 切换需在 pi 终端操作。
+3. **Session 管理** — 用 `#create` 创建新实例（复用 session 或全新开始），`#sessions` 列出全部 session，`#close` 关闭实例。实例内不再支持会话切换（用 `#create` + `#to` 替代）。
 4. **设置持久化** — `#settings` 变更保存到配置文件，`/reload` 不丢失。
 5. **群聊消息** — 仅接收 @机器人的消息。
 6. **配置文件** — 含 AppSecret，勿提交 git。

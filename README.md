@@ -170,15 +170,15 @@ Messages sent in QQ that start with `#` are treated as commands. Anything else i
 | Command | Description |
 |---------|-------------|
 | `#help` | Show help |
-| `#sessions` | List recent pi sessions (up to 20) |
-| `#resume <index/name>` | Switch to a session (operates in terminal) |
-| `#new` | Create a new session (operates in terminal) |
+| `#sessions [page]` | List all sessions across projects, 10 per page, most recently used first |
 | `#history [N]` | View last N messages in the most recently active session (default: 5) |
-| `#clear` | Compact current session (operates in terminal) |
 | `#target` | Set current QQ conversation as default forwarding target |
 | `#settings` | View/modify forwarding settings (`#setting` is an alias) |
-| `#instances` | List online instances (ID, pi session name, role, claimed sessions) |
+| `#instances` | List online instances (ID, role, claimed sessions with name/last-message preview) |
 | `#to <PID/name> [content]` | View current binding / switch the session to a specific instance / send content directly to it |
+| `#create <index/name>` | Spawn a new pi instance reusing an existing session |
+| `#create new [--dir <dir>]` | Spawn a new pi instance with a brand-new session (optional working dir) |
+| `#close <PID> [PID...]` | Close instance(s) by PID (multiple PIDs space-separated) |
 
 > `#settings` uses short aliases for two options: `forwardMessages` = `forwardDesktopMessages`, `forwardTools` = `forwardToolCalls`.
 
@@ -282,7 +282,7 @@ Use `/qq-logs` in pi to view the last 30 entries, or `/qq-logs-path` for the fil
 
 1. **Token security** — Access tokens expire in ~2 hours and are auto-refreshed. After 3 consecutive refresh failures, the extension disconnects and notifies the user.
 2. **Message rate limits** — QQ Bot proactive messages are limited to 4 per user/group per month (QQ platform rule). Passive replies have more relaxed limits.
-3. **Session management** — Session switching (`/new`, `/resume`) must be done in the pi terminal.
+3. **Session management** — Create new instances with `#create` (reuse a session or start fresh), list all sessions with `#sessions`, close instances with `#close`. Session switching within an instance is not available (use `#create` + `#to` instead).
 4. **Settings persistence** — `#settings` changes are saved to `qq-integration-config.json` and survive `/reload`.
 5. **Group messages** — Only @-bot messages are received (`GROUP_AT_MESSAGE_CREATE`).
 6. **Config file** — Contains AppSecret. Never commit it to git.

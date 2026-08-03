@@ -1,7 +1,7 @@
 import { createServer, connect, type Socket } from "node:net";
 import { existsSync, unlinkSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { InstanceEntry, QBSession, QqSettings } from "./types.js";
+import type { ClaimedSessionInfo, InstanceEntry, QBSession, QqSettings } from "./types.js";
 
 /** 单行 IPC 消息最大字节数，超过即断开连接（防内存耗尽 DoS） */
 const MAX_LINE_BYTES = 1024 * 1024;
@@ -9,7 +9,7 @@ const MAX_LINE_BYTES = 1024 * 1024;
 export type IpcEnvelope =
 	| { type: "register"; entry: InstanceEntry }
 	| { type: "unregister" }
-	| { type: "claim"; sessionKey: string }
+	| { type: "claim"; sessionKey: string; info?: ClaimedSessionInfo }
 	| { type: "outbound"; target: QBSession; content: string; replyTo?: { msgId?: string; eventId?: string } }
 	| { type: "heartbeat" }
 	| { type: "inbound"; session: QBSession; content: string; fromTag: string }
@@ -24,7 +24,7 @@ export type IpcEnvelope =
 
 export interface IpcServerOptions {
 	onRegister?: (entry: InstanceEntry) => void;
-	onClaim?: (sessionKey: string, instanceId: string) => void;
+	onClaim?: (sessionKey: string, instanceId: string, info?: ClaimedSessionInfo) => void;
 	onOutbound?: (msg: Extract<IpcEnvelope, { type: "outbound" }>, instanceId: string) => void;
 	onDisconnect?: (instanceId: string) => void;
 	/** follower 请求当前 settings（leader 收到后应回复 settings_changed） */
@@ -96,7 +96,7 @@ export function createIpcServer(sockPath: string, handlers: IpcServerOptions) {
 						conns.set(id, sock);
 						handlers.onRegister?.(env.entry);
 					} else if (env.type === "claim" && id) {
-						handlers.onClaim?.(env.sessionKey, id);
+						handlers.onClaim?.(env.sessionKey, id, env.info);
 					} else if (env.type === "outbound" && id) {
 						handlers.onOutbound?.(env, id);
 					} else if (env.type === "heartbeat") {

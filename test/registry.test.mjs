@@ -71,6 +71,27 @@ test("setClaim: 无该实例则忽略", () => {
 	assert.equal(readRegistry().instances["ghost"], undefined);
 });
 
+test("setClaim: 提供 info 写入展示信息，认领被夺时同步清除", () => {
+	writeRegistry({ leader: null, instances: {} });
+	upsertInstance({ ...instA });
+	upsertInstance({ ...instB });
+	setClaim("inst-a", "c2c:x1", { name: "小明", lastMsg: "帮我写代码" });
+	assert.equal(readRegistry().instances["inst-a"].claimedSessionInfo?.["c2c:x1"]?.name, "小明");
+	// 认领被夺：旧主展示信息被清除
+	setClaim("inst-b", "c2c:x1");
+	const reg = readRegistry();
+	assert.equal(reg.instances["inst-b"].claimedSessions.includes("c2c:x1"), true);
+	assert.equal(reg.instances["inst-a"].claimedSessionInfo?.["c2c:x1"], undefined);
+});
+
+test("setClaim: 未提供 info 时保留现有展示信息（follower claim / reroute 不丢失）", () => {
+	writeRegistry({ leader: null, instances: {} });
+	upsertInstance({ ...instA });
+	setClaim("inst-a", "c2c:x1", { name: "小红" });
+	setClaim("inst-a", "c2c:x1");
+	assert.equal(readRegistry().instances["inst-a"].claimedSessionInfo?.["c2c:x1"]?.name, "小红");
+});
+
 test("removeInstance: 删除实例并清理 leader 记录", () => {
 	setLeader("inst-a", "/tmp/leader.sock");
 	upsertInstance({ ...instA });

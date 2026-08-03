@@ -20,6 +20,9 @@
 - `#instances` 展示每个实例的认领会话（缩进列表）：名字优先（QQ 会话名），无名字用最近消息摘要，60 字符截断 + 相对时间；claim 时把会话名字/最近消息写入 registry（`claimedSessionInfo`，向后兼容旧数据）
 - `#sessions` / `#instances` 摘要截断统一为 60 字符（`SESSION_PREVIEW_LEN`，#history 仍为 300）
 - 修复：`#create`/`#close` 命令分发缺失（case 未编译进 switch，导致 `#create new` 提示未知命令）；新增 `command.test.mjs`（7 用例）覆盖命令分发/spawn 参数/分页/移除命令引导
+- 修复（审查）：follower claim / reroute 不再清空认领展示信息（`setClaim` 未提供 info 时保留现有；IPC `claim` 信封透传 `info`，leader 侧清洗后落库）
+- 修复（审查）：`#sessions` 页码越界时 clamp（页脚显示实际页，不再出现「第 99/2 页」）；spawn 补 `child.on('error')` 监听防 uncaughtException 拖崩宿主
+- 版本号对齐：package.json / package-lock.json bump 至 0.5.2（此前 lock 文件滞后在 0.2.0，直接发版会导致 npm publish 发布错误版本）
 
 - 修复：`#history` 在多实例下展示错误实例的消息——原实现取「全局最近修改」的 session 文件（可能属于其他实例，导致看到的不是当前实例的对话）；改为通过当前实例的 `sessionManager.getSessionFile()` 定向读取本实例的 session 历史（session 切换后自动指向新文件）；拿不到时回退旧逻辑
 - 移除 `#resume`/`#new`/`#clear`：这三个命令基于不完整的 hack（绕过命令流程，上下文不清空/不加载），已被 `#create` 取代——复用 session 或全新 session 都通过 spawn 新实例实现，行为完整

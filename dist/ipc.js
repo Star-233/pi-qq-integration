@@ -61,7 +61,7 @@ export function createIpcServer(sockPath, handlers) {
                         handlers.onRegister?.(env.entry);
                     }
                     else if (env.type === "claim" && id) {
-                        handlers.onClaim?.(env.sessionKey, id);
+                        handlers.onClaim?.(env.sessionKey, id, env.info);
                     }
                     else if (env.type === "outbound" && id) {
                         handlers.onOutbound?.(env, id);

@@ -308,10 +308,10 @@ export function createSessionManager() {
     page: number;
     pageSize: number;
     currentFile?: string | null;
-  }): { text: string; total: number; totalPages: number } {
+  }): { text: string; total: number; totalPages: number; page: number } {
     const sessions = listSessions();
     const total = sessions.length;
-    if (total === 0) return { text: "暂无 session", total: 0, totalPages: 0 };
+    if (total === 0) return { text: "暂无 session", total: 0, totalPages: 0, page: 1 };
     const totalPages = Math.ceil(total / opts.pageSize);
     const page = Math.min(Math.max(1, opts.page), totalPages);
     const start = (page - 1) * opts.pageSize;
@@ -330,7 +330,7 @@ export function createSessionManager() {
       const suffix = isCurrent ? "（当前）" : "";
       return `${idx}. ${mark}${title} — ${ago}${suffix}`;
     });
-    return { text: lines.join("\n"), total, totalPages };
+    return { text: lines.join("\n"), total, totalPages, page };
   }
 
   return {

@@ -270,6 +270,10 @@ export default function (pi: ExtensionAPI) {
 				env: process.env,
 			});
 			child.unref();
+			// 异步 error 必须接住，否则升级为 uncaughtException 拖崩宿主 pi 进程
+			child.on("error", (err) => {
+				logError(`#create: spawn 进程错误: ${err}`);
+			});
 			info(
 				`#create: 已 spawn 新实例 (sh=${child.pid}, cwd=${opts.cwd}${opts.sessionPath ? `, session=${opts.sessionPath}` : ""})`,
 			);
@@ -666,13 +670,27 @@ export default function (pi: ExtensionAPI) {
 					const cleaned = entry.name ? sanitizeDisplayName(entry.name) : "";
 					upsertInstance({ ...entry, name: cleaned || undefined });
 				},
-				onClaim: (sessionKey, instanceId) => {
+				onClaim: (sessionKey, instanceId, info) => {
 					if (!isValidSessionKey(sessionKey)) {
 						logError(`claim 拒绝: 非法 sessionKey ${sessionKey}`);
 						return;
 					}
-					setClaim(instanceId, sessionKey);
-				},
+					// info 仅透传 name/lastMsg 展示字段，防注入任意结构
+					const cleanInfo =
+						info && typeof info === "object"
+							? {
+									name:
+										typeof info.name === "string"
+											? info.name.slice(0, 64)
+											: undefined,
+									lastMsg:
+										typeof info.lastMsg === "string"
+											? info.lastMsg.slice(0, DEFAULTS.SESSION_PREVIEW_LEN)
+											: undefined,
+								}
+							: undefined;
+						setClaim(instanceId, sessionKey, cleanInfo);
+					},
 				onOutbound: (msg, instanceId) => {
 					if (_api) {
 						_api.sendMarkdown(msg.target, msg.content, msg.replyTo)
@@ -946,7 +964,7 @@ export default function (pi: ExtensionAPI) {
 			lastMsg: lastMsg ? lastMsg.slice(0, DEFAULTS.SESSION_PREVIEW_LEN) : undefined,
 		};
 		if (_role === "leader") setClaim(_instanceId, key, info);
-		else if (_role === "follower" && _ipcClient) _ipcClient.send({ type: "claim", sessionKey: key });
+		else if (_role === "follower" && _ipcClient) _ipcClient.send({ type: "claim", sessionKey: key, info });
 	}
 
 	// ── QQ 消息白名单（H1：防远程提示词注入/RCE）──

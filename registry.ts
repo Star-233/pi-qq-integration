@@ -99,11 +99,10 @@ export function setClaim(id: string, sessionKey: string, info?: ClaimedSessionIn
 	if (!inst.claimedSessions.includes(sessionKey)) {
 		inst.claimedSessions = [...inst.claimedSessions, sessionKey];
 	}
+	// 提供 info 才写入；未提供则保留现有展示信息（follower claim / reroute 不丢失）
 	if (info) {
 		inst.claimedSessionInfo ??= {};
 		inst.claimedSessionInfo[sessionKey] = { ...info, at: Date.now() };
-	} else if (inst.claimedSessionInfo) {
-		delete inst.claimedSessionInfo[sessionKey];
 	}
 	writeRegistry(reg);
 }

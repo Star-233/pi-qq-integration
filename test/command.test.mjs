@@ -23,6 +23,7 @@ function mockSessionManager() {
 			text: page === 1 ? "1. test" : "2. test",
 			total: 12,
 			totalPages: 2,
+			page: Math.min(page, 2),
 		}),
 		getSessionCwd: () => undefined,
 		unencodeProjectDir: (d) => d,
@@ -149,6 +150,14 @@ test("#sessions 默认第 1 页，带页码时传对应页", async () => {
 	assert.match(sent[0].text, /第 1\/2 页/);
 	await handler.tryHandle("#sessions 2", session);
 	assert.match(sent[1].text, /第 2\/2 页/);
+});
+
+test("#sessions 页码越界时 clamp 到有效页", async () => {
+	const { handler, sent } = makeHandler();
+	await handler.tryHandle("#sessions 99", session);
+	// mock 共 2 页：页脚应显示 clamp 后的第 2 页，而不是 99
+	assert.match(sent[0].text, /第 2\/2 页/);
+	assert.ok(!sent[0].text.includes("99"));
 });
 
 test("#resume/#new/#clear 已移除并引导使用 #create", async () => {

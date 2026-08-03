@@ -1,4 +1,4 @@
-import type { InstanceEntry, QBSession, QqSettings } from "./types.js";
+import type { ClaimedSessionInfo, InstanceEntry, QBSession, QqSettings } from "./types.js";
 export type IpcEnvelope = {
     type: "register";
     entry: InstanceEntry;
@@ -7,6 +7,7 @@ export type IpcEnvelope = {
 } | {
     type: "claim";
     sessionKey: string;
+    info?: ClaimedSessionInfo;
 } | {
     type: "outbound";
     target: QBSession;
@@ -44,7 +45,7 @@ export type IpcEnvelope = {
 };
 export interface IpcServerOptions {
     onRegister?: (entry: InstanceEntry) => void;
-    onClaim?: (sessionKey: string, instanceId: string) => void;
+    onClaim?: (sessionKey: string, instanceId: string, info?: ClaimedSessionInfo) => void;
     onOutbound?: (msg: Extract<IpcEnvelope, {
         type: "outbound";
     }>, instanceId: string) => void;

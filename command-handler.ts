@@ -151,18 +151,18 @@ export function createCommandHandler(
 
   async function cmdSessions(session: QBSession, arg: string): Promise<void> {
     const page = Math.max(1, parseInt(arg.trim(), 10) || 1);
-    const { text, total, totalPages } = sessionManager.formatSessionListPage({
+    const { text, total, totalPages, page: shownPage } = sessionManager.formatSessionListPage({
       page,
       pageSize: DEFAULTS.SESSION_PAGE_SIZE,
       currentFile: callbacks.getCurrentSessionFile?.() ?? null,
     });
-    debug(`#sessions: 第 ${page}/${totalPages} 页`);
+    debug(`#sessions: 第 ${shownPage}/${totalPages} 页`);
     await api.sendMarkdown(session, [
       "## 📋 Pi Sessions",
       "",
       text,
       "",
-      `共 ${total} 条 · 第 ${page}/${totalPages} 页 · 用 \`#sessions <页码>\` 翻页`,
+      `共 ${total} 条 · 第 ${shownPage}/${totalPages} 页 · 用 \`#sessions <页码>\` 翻页`,
       "",
       "`#create <序号>` 用该 session 创建新实例",
     ].join("\n"));

@@ -12,6 +12,7 @@ export declare function createSessionManager(): {
         text: string;
         total: number;
         totalPages: number;
+        page: number;
     };
     getSessionCwd: (filePath: string) => string | undefined;
     unencodeProjectDir: (dirName: string) => string;
