@@ -225,8 +225,10 @@ export function createSessionManager() {
 
   /**
    * 格式化 session 列表为 Markdown（展示自定义名优先，否则最后一条用户消息摘要）
+   * @param cwd 只显示当前工作目录对应的项目
+   * @param currentFile 当前实例活跃的 session 文件路径（匹配时标记 📌 当前）
    */
-  function formatSessionList(cwd?: string): string {
+  function formatSessionList(cwd?: string, currentFile?: string | null): string {
     const sessions = listSessions(cwd);
     if (sessions.length === 0) return "暂无 session";
 
@@ -234,13 +236,16 @@ export function createSessionManager() {
       .slice(0, DEFAULTS.SESSION_LIST_LIMIT)
       .map((s, i) => {
         const ago = relativeTime(s.modifiedAt);
+        const isCurrent = !!currentFile && s.path === currentFile;
         const display = getSessionDisplay(s.path);
         const title = display.customName
           ? `**${display.customName}**`
           : display.lastUserMessage
             ? `💬 ${display.lastUserMessage.slice(0, DEFAULTS.MSG_PREVIEW_LEN)}`
             : s.rawName;
-        return `${i + 1}. ${title} — ${ago}`;
+        const mark = isCurrent ? "📌 " : "";
+        const suffix = isCurrent ? "（当前）" : "";
+        return `${i + 1}. ${mark}${title} — ${ago}${suffix}`;
       })
       .join("\n");
   }

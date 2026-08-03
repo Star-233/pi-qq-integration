@@ -84,7 +84,7 @@ export function createCommandHandler(api, sessionManager, callbacks) {
         ].join("\n"));
     }
     async function cmdSessions(session) {
-        const list = sessionManager.formatSessionList(callbacks.getCwd?.() ?? undefined);
+        const list = sessionManager.formatSessionList(callbacks.getCwd?.() ?? undefined, callbacks.getCurrentSessionFile?.() ?? null);
         debug(`#sessions: 返回 ${list.split("\n").length} 条`);
         await api.sendMarkdown(session, [
             "## 📋 Pi Sessions",

@@ -134,7 +134,10 @@ export function createCommandHandler(
   }
 
   async function cmdSessions(session: QBSession): Promise<void> {
-    const list = sessionManager.formatSessionList(callbacks.getCwd?.() ?? undefined);
+    const list = sessionManager.formatSessionList(
+      callbacks.getCwd?.() ?? undefined,
+      callbacks.getCurrentSessionFile?.() ?? null,
+    );
     debug(`#sessions: 返回 ${list.split("\n").length} 条`);
     await api.sendMarkdown(session, [
       "## 📋 Pi Sessions",

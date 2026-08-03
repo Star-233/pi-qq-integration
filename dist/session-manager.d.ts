@@ -3,6 +3,6 @@ export declare function createSessionManager(): {
     listSessions: (cwd?: string) => PiSessionInfo[];
     getSessionPreview: (sessionName: string, maxMessages?: number) => string;
     getSessionFilePreview: (filePath: string, maxMessages?: number) => string;
-    formatSessionList: (cwd?: string) => string;
+    formatSessionList: (cwd?: string, currentFile?: string | null) => string;
 };
 export type SessionManager = ReturnType<typeof createSessionManager>;
