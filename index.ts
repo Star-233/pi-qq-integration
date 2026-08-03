@@ -214,6 +214,8 @@ export default function (pi: ExtensionAPI) {
 	let _followerRetryTimer: ReturnType<typeof setTimeout> | null = null;
 	/** follower 重连延迟（指数退避） */
 	let _followerRetryDelay: number = DEFAULTS.FOLLOWER_RETRY_MS;
+	/** 已通知过"与 leader 断开"（避免 error+close 双触发及重连循环刷屏，连接恢复时重置） */
+	let _leaderDisconnectNotified = false;
 
 	// ── 连接/断开 ──
 
@@ -719,11 +721,17 @@ export default function (pi: ExtensionAPI) {
 		}
 		const sock = getLeaderSock();
 		if (!sock) {
+			// 无 leader 可连：仅首次通知一次，后续重试静默
+			if (!_leaderDisconnectNotified) {
+				_leaderDisconnectNotified = true;
+				ctx.ui.notify("QQ Bot: 未找到 leader，正在重连...", "info");
+			}
 			scheduleRetryFollower(ctx);
 			return;
 		}
 		const client = createIpcClient(sock, {
 			onConnect: () => {
+				_leaderDisconnectNotified = false; // 连接恢复，重置去重标志
 				client.send({ type: "register", entry: selfEntry("follower") });
 				// 同步 leader 的 settings 状态
 				client.send({ type: "settings_request" });
@@ -740,7 +748,11 @@ export default function (pi: ExtensionAPI) {
 			},
 			onClose: () => {
 				if (_followerStop) return;
-				ctx.ui.notify("QQ Bot: 与 leader 断开，正在重连...", "info");
+				// 去重：只在首次断开时通知（error+close 双触发、重连循环都不再重复弹）
+				if (!_leaderDisconnectNotified) {
+					_leaderDisconnectNotified = true;
+					ctx.ui.notify("QQ Bot: 与 leader 断开，正在重连...", "info");
+				}
 				scheduleRetryFollower(ctx);
 			},
 		});

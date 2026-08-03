@@ -212,8 +212,8 @@ export function createIpcClient(sockPath, handlers) {
         handlers.onClose?.();
     });
     client.on("error", () => {
+        // error 后必然触发 close，onClose 由 close 兜底，避免双触发
         connected = false;
-        handlers.onClose?.();
     });
     return {
         send(env) {
