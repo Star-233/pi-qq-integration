@@ -307,9 +307,11 @@ export default function (pi) {
     // ── 连接/断开（多实例：leader 持 QQ 连接，follower 经 IPC 委派）──
     // Windows 上 node:net 的 IPC 走命名管道，路径必须形如 \\.\pipe\... 或 \\?\pipe\...
     // （见 https://nodejs.org/api/net.html#identifying-paths-for-ipc-connections）。
-    // JavaScript 字符串需额外反斜杠转义：源码 `\\.\pipe\...` 运行时才得到 `\\.\pipe\...`。
+    // JS 字符串里反斜杠本身也要转义：源码须写 4 个反斜杠 `\\\\.\\pipe\\...`，
+    // 运行时才得到 2 个反斜杠的 `\\.\pipe\...`；若只写 2 个（`\\.\pipe\...`），
+    // `\p` 会被解析为 `p`，得到畸形路径 `\.pipe...`，Windows 下 listen 报 EACCES（issue #3）。
     const LEADER_SOCK_PATH = process.platform === "win32"
-        ? `\\.\pipe\pi-qq-${process.pid}`
+        ? `\\\\.\\pipe\\pi-qq-${process.pid}`
         : `${PATHS.INSTANCE_SOCK_DIR}/${process.pid}.sock`;
     async function connect(ctx) {
         if (_role) {

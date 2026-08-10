@@ -10,6 +10,10 @@
   - `command.test.mjs` — 命令分发（#create/#close 多 PID/#sessions 分页/#instances 认领展示/移除命令引导）
 - 纯逻辑抽离到独立模块：`validation.ts`（校验）、`routing.ts`（路由），index.ts 直接 import（不再测试逻辑副本）
 
+## 0.5.3
+
+- 修复（Windows）：命名管道路径转义不足导致启动报 `EACCES: permission denied \.pipepi-qq-<pid>`、QQ Bot 连接失败（issue #3）；修正转义后 Windows 下 IPC 监听与 QQ 连接恢复正常
+
 ## 0.5.2
 
 - 新增 `#create`：leader 从 QQ 侧 spawn 新的 pi 实例（follower）——`#create <序号/名称>` 复用现有 session（`--session` + session 头部真实 cwd），`#create new [--dir <目录>]` 全新 session（缺省当前实例 cwd）。rpc mode headless 长驻，`tail -f /dev/null |` 保活 stdin（不随 leader 生命周期），实例 ID = PID
