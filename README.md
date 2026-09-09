@@ -160,6 +160,32 @@ Commands used in the pi terminal:
 | `/qq-logs-path` | Show log file path |
 | `/qq-logs-clear` | Clear log file |
 | `/qq-target` | Set/view default QQ forwarding target |
+| `/qq-alias` | openid→alias mapping table (list/set/del); correlates the same user across scenes |
+
+---
+
+## Sender identity & alias mapping
+
+Messages forwarded to pi carry a sender-identity prefix so the model can tell sources apart:
+
+```
+[QQ|Alice|openid:AbCdEf12] what's the weather
+[QQ群|openid:AbCdEf12] hi
+```
+
+- The openid (first 12 chars) comes from QQ's official `user_openid` (c2c) / `member_openid` (group). The same user gets a **different** openid in c2c and in each group (platform design, no unionid).
+- Group events usually omit nicknames, so group prefixes show only the openid short code by default.
+- An alias mapping table lets you point all of one person's openids (c2c + groups) to the same alias for cross-scene identity; when matched, the prefix shows the alias.
+
+The mapping file `~/.pi/agent/qq-integration/aliases.json` can be edited directly (hot-reloads on save), or maintained from the pi terminal:
+
+```
+/qq-alias list                              # list all
+/qq-alias set <openid-or-unique-prefix> <alias>   # add/update
+/qq-alias del <openid-or-unique-prefix>     # delete
+```
+
+See [docs/alias-mapping-guide.md](docs/alias-mapping-guide.md).
 
 ---
 
@@ -255,6 +281,7 @@ pi-qq-integration/
 │   └─ JSON: { pid, startedAt, heartbeatAt }  (heartbeat every 30s)
 └── qq-integration/
     ├── registry.json             # Instance registry (atomic write)
+    ├── aliases.json              # openid→alias mapping table (hand-editable, hot-reload)
     └── instances/
         └── <pid>.sock            # IPC Unix socket (leader; named pipe on Windows)
 ```

@@ -8,6 +8,7 @@ export const PATHS = {
     LOCK: join(DATA_DIR, "qq-integration.lock"),
     LOG: join(DATA_DIR, "qq-integration.log"),
     REGISTRY: join(DATA_DIR, "qq-integration", "registry.json"),
+    ALIASES: join(DATA_DIR, "qq-integration", "aliases.json"),
     INSTANCE_SOCK_DIR: join(DATA_DIR, "qq-integration", "instances"),
     SESSIONS: join(DATA_DIR, "sessions"),
 };

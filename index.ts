@@ -63,6 +63,7 @@ import { openSync, mkdirSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { PATHS, DEFAULTS, sessionTag } from "./constants.js";
+import { resolveAlias, listAliases, setAlias, deleteAlias } from "./aliases.js";
 
 const require = createRequire(import.meta.url);
 const packageJson = require("../package.json");
@@ -359,6 +360,8 @@ export default function (pi: ExtensionAPI) {
 	}
 	/** leader 持有：发送消息索引(ref_idx) → 实例 id 映射，用于引用消息定向路由 */
 	const _refIdxMap: RefIdxMap = new Map();
+	/** 已提示过“未登记别名”的 openid（进程运行内每个 openid 只提示一次，防刷屏） */
+	const _aliasHinted = new Set<string>();
 	const _roleConfig = _multi.role;
 	let _ipcServer: ReturnType<typeof createIpcServer> | null = null;
 	let _ipcClient: ReturnType<typeof createIpcClient> | null = null;
@@ -1006,6 +1009,36 @@ export default function (pi: ExtensionAPI) {
 
 	// ── IPC 入站数据校验（与 isValidSettings 同范式，防注入畸形数据）──
 
+	/**
+	 * 构造转发给 pi 的消息前缀，附带发送者身份，便于模型区分消息来源。
+	 * 格式: [QQ|昵称|openid:xxxxxxxxxxxx] / [QQ群|昵称|openid:xxxxxxxxxxxx]；
+	 * 别名映射命中时用别名替代 QQ 昵称；昵称或 openid 缺失时相应省略；
+	 * 两者都缺失时退回原 [QQ] / [QQ群] 标签。
+	 */
+	/**
+	 * 提取发送者 openid：c2c 为会话对方（session.id），群聊为发送者 member_openid（userId）。
+	 * 与 senderPrefix 的取值逻辑保持一致。
+	 */
+	function senderOpenid(session: QBSession): string {
+		return session.userId ?? (session.type === "c2c" ? session.id : "");
+	}
+
+	function senderPrefix(session: QBSession): string {
+		const tag = sessionTag(session.type);
+		// c2c: 发送者即会话对方（session.id）；群聊: 取发送者 member_openid（userId）
+		const openid = senderOpenid(session);
+		// 别名映射优先：命中则用人工登记的别名替代 QQ 返回的昵称
+		const alias = openid ? resolveAlias(openid) : undefined;
+		const parts: string[] = [tag];
+		if (alias) {
+			parts.push(alias);
+		} else if (session.name && session.name !== "好友" && session.name !== "群聊") {
+			parts.push(session.name.slice(0, 32));
+		}
+		if (openid) parts.push(`openid:${openid.slice(0, 12)}`);
+		return parts.length > 1 ? `[${parts.join("|")}]` : `[${tag}]`;
+	}
+
 	async function handleInboundQqMessage(qqMsg: { session: QBSession; content: string }): Promise<void> {
 		if (!isAllowed(qqMsg.session)) {
 			warn(`拒绝非白名单消息: ${qqMsg.session.type}/${qqMsg.session.id}`);
@@ -1038,21 +1071,29 @@ export default function (pi: ExtensionAPI) {
 		claimSession(qqMsg.session, qqMsg.content);
 		debug(`收到 QQ 消息: [${qqMsg.session.type}] ${qqMsg.content.slice(0, DEFAULTS.CONTENT_PREVIEW_LEN)}`);
 
+		// 未登记别名提示（每次运行内每 openid 一次）：附带完整 openid，便于模型主动引导登记
+		const openid = senderOpenid(qqMsg.session);
+		let aliasHint = "";
+		if (openid && !resolveAlias(openid) && !_aliasHinted.has(openid)) {
+			_aliasHinted.add(openid);
+			aliasHint = `\n[提示: 该发送者尚未登记别名，完整 openid: ${openid}。可在 pi 终端执行 /qq-alias set ${openid} <别名> 登记，或让模型引导用户完成]`;
+			info(`未登记 openid 提示已发送: ${openid.slice(0, 12)}…`);
+		}
+
 		const handled = _cmdHandler?.tryHandle(qqMsg.content, qqMsg.session);
 		if (handled) {
 			handled.then((isCmd) => {
 				if (!isCmd) {
-					const fromTag = sessionTag(qqMsg.session.type);
-					pi.sendUserMessage(`[${fromTag}] ${qqMsg.content}`);
-					info(`转发到 pi: [${fromTag}] ${qqMsg.content.slice(0, DEFAULTS.CONTENT_PREVIEW_LEN)}`);
+					const prefix = senderPrefix(qqMsg.session);
+					pi.sendUserMessage(`${prefix} ${qqMsg.content}${aliasHint}`);
+					info(`转发到 pi: ${prefix} ${qqMsg.content.slice(0, DEFAULTS.CONTENT_PREVIEW_LEN)}`);
 				} else {
 					debug(`QQ 命令已处理: ${qqMsg.content}`);
 				}
 			}).catch((e) => logError(`QQ 命令处理失败: ${e}`));
 		} else {
 			// 无命令处理器兜底：当作普通消息转发给 pi
-			const fromTag = sessionTag(qqMsg.session.type);
-			pi.sendUserMessage(`[${fromTag}] ${qqMsg.content}`);
+			pi.sendUserMessage(`${senderPrefix(qqMsg.session)} ${qqMsg.content}${aliasHint}`);
 		}
 	}
 
@@ -1312,6 +1353,61 @@ async function disconnect(ctx: ExtensionContext): Promise<void> {
 			ctx.ui.notify(
 				`默认目标已设为: \`${sub}\` \`${id}\` (${name})`,
 				"info",
+			);
+		},
+	});
+
+	pi.registerCommand("qq-alias", {
+		description: "openid→别名映射表：跨场景关联同一用户（详见 docs/alias-mapping-guide.md）",
+		handler: async (args: string, ctx: ExtensionCommandContext) => {
+			const parts = args.trim().split(/\s+/);
+			const sub = parts[0]?.toLowerCase();
+
+			if (!sub || sub === "list") {
+				const all = listAliases();
+				if (all.length === 0) {
+					ctx.ui.notify(
+						"映射表为空。用法: /qq-alias set <openid或唯一前缀> <别名>",
+						"info",
+					);
+					return;
+				}
+				const lines = all
+					.map((e) => `  ${e.alias} ← ${e.openid.slice(0, 16)}…`)
+					.join("\n");
+				ctx.ui.notify(`别名映射（${all.length} 条）:\n${lines}`, "info");
+				return;
+			}
+
+			if (sub === "set") {
+				const key = parts[1];
+				const alias = parts.slice(2).join(" ");
+				if (!key || !alias) {
+					ctx.ui.notify(
+						"用法: /qq-alias set <openid或唯一前缀> <别名>（别名支持空格，1~32 字符）",
+						"warning",
+					);
+					return;
+				}
+				const r = setAlias(key, alias);
+				ctx.ui.notify(r.message, r.ok ? "info" : "warning");
+				return;
+			}
+
+			if (sub === "del") {
+				const key = parts[1];
+				if (!key) {
+					ctx.ui.notify("用法: /qq-alias del <openid或唯一前缀>", "warning");
+					return;
+				}
+				const r = deleteAlias(key);
+				ctx.ui.notify(r.message, r.ok ? "info" : "warning");
+				return;
+			}
+
+			ctx.ui.notify(
+				"子命令必须是 list / set / del。用法: /qq-alias set <openid或唯一前缀> <别名>",
+				"warning",
 			);
 		},
 	});

@@ -1,3 +1,11 @@
+## 0.5.4
+
+- 转发给 pi 的消息前缀携带发送者身份：`[QQ]`/`[QQ群]` → `[QQ|昵称|openid:xxxxxxxxxxxx]`/`[QQ群|昵称|openid:xxxxxxxxxxxx]`（昵称缺失时省略昵称段；信息全缺失时退回原格式，完全向后兼容）。openid 取官方平台下发的 `user_openid`（私聊）或 `member_openid`（群聊）前 12 位
+- 新增别名映射表（方案 B）：`~/.pi/agent/qq-integration/aliases.json`，openid → 别名人工映射，把同一自然人在私聊/各群的多个 openid 指到同一别名，实现跨场景身份关联；命中时前缀用别名替代 QQ 昵称。文件支持手动直接编辑（mtime 热重载，免重启，多实例共享）
+- 新增 `/qq-alias` 命令：`list` / `set <openid或唯一前缀> <别名>` / `del <openid或唯一前缀>`，前缀支持模糊匹配（歧义时报错列候选）；别名自动清洗（去控制字符、32 字截断），条目上限 1000，脏数据按空表容错
+- 新增模块 `aliases.ts`、测试 `test/aliases.test.mjs`（13 用例）、使用说明 `docs/alias-mapping-guide.md`、变更总结 `docs/CHANGES-sender-identity.md`
+- 背景：QQ 官方平台对同一用户在不同场景下发的 openid 互不相同（无 unionid），群聊事件昵称通常不下发，详见 `docs/CHANGES-sender-identity.md`
+
 ## 测试体系
 
 - 新增 `npm test`（`node --test`，零第三方依赖，Node ≥ 20 内置测试框架）
