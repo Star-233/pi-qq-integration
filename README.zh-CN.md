@@ -159,6 +159,32 @@ QQ 用户
 | `/qq-logs-path` | 查看日志文件路径 |
 | `/qq-logs-clear` | 清空日志文件 |
 | `/qq-target` | 设置/查看默认 QQ 转发目标 |
+| `/qq-alias` | openid→别名映射表（list/set/del），跨场景关联同一用户 |
+
+---
+
+## 消息来源识别与别名映射
+
+转发给 pi 的消息前缀会携带发送者身份，便于模型区分来源：
+
+```
+[QQ|张三|openid:AbCdEf12] 帮我查天气
+[QQ群|openid:AbCdEf12] 顶一下
+```
+
+- openid 为 QQ 官方平台下发的 `user_openid`（私聊）/ `member_openid`（群聊）前 12 位；同一用户在私聊、不同群里的 openid 互不相同（平台机制，无 unionid）
+- 群聊事件 QQ 通常不下发昵称，故群聊默认只能看到 openid 短码
+- 通过别名映射表可把同一个人的多个 openid 指到同一别名，实现跨场景身份关联；命中后前缀显示别名
+
+映射文件 `~/.pi/agent/qq-integration/aliases.json` 可直接手动编辑（保存即生效），或用 pi 终端命令维护：
+
+```
+/qq-alias list                            # 列出全部
+/qq-alias set <openid或唯一前缀> <别名>    # 新增/更新
+/qq-alias del <openid或唯一前缀>           # 删除
+```
+
+详见 [docs/alias-mapping-guide.md](docs/alias-mapping-guide.md)。
 
 ---
 
@@ -247,6 +273,7 @@ pi-qq-integration/
 │   └─ JSON: { pid, startedAt, heartbeatAt } （心跳每 30 秒更新）
 └── qq-integration/
     ├── registry.json             # 实例注册表（原子写入）
+    ├── aliases.json              # openid→别名映射表（手动可编，热重载）
     └── instances/
         └── <pid>.sock            # IPC Unix socket（leader；Windows 为命名管道）
 ```

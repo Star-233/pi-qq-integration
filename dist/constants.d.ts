@@ -4,6 +4,7 @@ export declare const PATHS: {
     readonly LOCK: string;
     readonly LOG: string;
     readonly REGISTRY: string;
+    readonly ALIASES: string;
     readonly INSTANCE_SOCK_DIR: string;
     readonly SESSIONS: string;
 };
